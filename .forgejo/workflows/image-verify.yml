@@ -1,0 +1,155 @@
+---
+# OPS-411: Pre-merge image-existence gate for GitOps tag-bump PRs.
+#
+# Incident rationale (PR #143, OPS-371):
+#   apps/backstage/deployment.yaml tag bumped a02f3a5 → 019264bc.
+#   Image harbor.208.haist.farm/sentinel/backstage:019264bc was NEVER pushed
+#   to Harbor. ArgoCD reconciled; Kyverno admission webhook blocked the
+#   resulting ReplicaSet with NOT_FOUND at runtime. Production stayed healthy
+#   (Kyverno is the admission safety net) but the deploy pipeline went noisy.
+#
+# What this workflow does:
+#   On any PR that changes deployment.yaml / values.yaml / values-*.yaml,
+#   extract all harbor.208.haist.farm/PROJECT/REPO:TAG references introduced
+#   by the PR diff (added lines only), then query the Harbor v2.0 API to
+#   verify each artifact exists before merge is allowed.
+#
+# Harbor API used:
+#   GET /api/v2.0/projects/{project}/repositories/{repo}/artifacts/{reference}
+#   → 200 if artifact exists, 404 if not.
+#   Ref: https://goharbor.io/docs/2.0.0/build-customize-contribute/configure-token-service/
+#   Live endpoint: https://harbor.208.haist.farm/devcenter-api-2.0
+#
+# Auth:
+#   Uses HARBOR_USERNAME / HARBOR_PASSWORD Forgejo secrets.
+#   Same credentials already configured for build-push workflows (build-sentinel-ops.yml,
+#   overwatch-console build.yml). No new secret provisioning required.
+#
+# Scope:
+#   Only tag-based refs are checked (harbor.208.haist.farm/project/repo:tag).
+#   @sha256: digest-pinned refs are excluded — they are immutable content
+#   addresses; Kyverno handles them at admission.
+#
+# Cosign signature verification:
+#   Deferred to a follow-up PR. Image existence is the hard gate here;
+#   cosign requires additional runner tooling validation outside this scope.
+#
+# This workflow only fires on pull_request (not on push to main), ensuring
+# that direct pushes authorized by the operator are not blocked by this gate.
+
+name: image-verify
+
+on:
+  pull_request:
+    paths:
+      - "**/deployment.yaml"
+      - "**/values.yaml"
+      - "**/values-*.yaml"
+      - ".forgejo/workflows/image-verify.yml"
+
+jobs:
+  verify-images:
+    runs-on: iac
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for three-dot diff
+
+      - name: Extract Harbor image refs from PR diff
+        id: extract
+        run: |
+          set -euo pipefail
+
+          BASE_REF="${{ github.base_ref }}"
+          echo "PR base branch: ${BASE_REF}"
+          echo "Fetching origin/${BASE_REF} for three-dot diff..."
+
+          # Ensure the base branch tip is available locally
+          git fetch origin "${BASE_REF}" --depth=1 2>/dev/null || true
+
+          # Three-dot diff: only changes introduced by this PR (not already on base).
+          # Path-scoped to manifest files only — prevents workflow file comments
+          # (and any other non-manifest added lines) from being scanned for image refs.
+          # Filter to added lines (+); exclude diff header lines (^+++ b/path);
+          # exclude comment-only lines (^+[whitespace]#) as belt-and-suspenders.
+          # Extract full image:tag references.
+          #
+          # Regex: harbor.208.haist.farm/PROJECT/REPO:TAG
+          #   [a-z0-9_-]+ for project and repo components (Harbor naming convention)
+          #   [a-zA-Z0-9._-]+ for tag (alphanumeric + . _ - ; excludes trailing
+          #                    punctuation that could bleed in from YAML comments)
+          # @sha256: digest refs are excluded — they match neither the colon pattern
+          # nor the tag character class ([a-z0-9_-] stops before @).
+          git diff "origin/${BASE_REF}...HEAD" -- "**/deployment.yaml" "**/values.yaml" "**/values-*.yaml" \
+            | grep '^+' \
+            | grep -v '^+++' \
+            | grep -v '^+[[:space:]]*#' \
+            | grep -oE 'harbor\.208\.haist\.farm/[a-z0-9_-]+/[a-z0-9_-]+:[a-zA-Z0-9._-]+' \
+            | sort -u \
+            > /tmp/changed-images.txt || true
+
+          if [ ! -s /tmp/changed-images.txt ]; then
+            echo "No Harbor image:tag refs added or changed in this PR — skipping verification."
+            echo "has_images=false" >> "$GITHUB_OUTPUT"
+          else
+            COUNT=$(wc -l < /tmp/changed-images.txt | tr -d ' ')
+            echo "Found ${COUNT} Harbor image ref(s) introduced or changed in this PR:"
+            cat /tmp/changed-images.txt
+            echo "has_images=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify each image exists in Harbor
+        if: steps.extract.outputs.has_images == 'true'
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          FAILED=0
+          PASSED=0
+          HARBOR_BASE="https://harbor.208.haist.farm/api/v2.0"
+
+          while IFS= read -r IMAGE; do
+            [ -z "$IMAGE" ] && continue
+
+            # Parse harbor.208.haist.farm/PROJECT/REPO:TAG
+            # Strip registry host
+            PATH_PART="${IMAGE#harbor.208.haist.farm/}"
+            # Project is the first path component
+            PROJECT="${PATH_PART%%/*}"
+            # Repo+tag is everything after project/
+            REPO_TAG="${PATH_PART#*/}"
+            # Repo is everything before the last colon
+            REPO="${REPO_TAG%:*}"
+            # Tag is everything after the last colon
+            TAG="${REPO_TAG##*:}"
+
+            echo "Checking: ${IMAGE}"
+            echo "  project=${PROJECT}  repo=${REPO}  tag=${TAG}"
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              --user "${HARBOR_USERNAME}:${HARBOR_PASSWORD}" \
+              "${HARBOR_BASE}/projects/${PROJECT}/repositories/${REPO}/artifacts/${TAG}")
+
+            if [ "${HTTP_CODE}" = "200" ]; then
+              echo "  PASS: artifact exists in Harbor (HTTP ${HTTP_CODE})"
+              PASSED=$((PASSED + 1))
+            else
+              echo "  FAIL: artifact NOT found in Harbor (HTTP ${HTTP_CODE})"
+              echo "::error::Image missing from Harbor: ${IMAGE} (HTTP ${HTTP_CODE}). Push the image before merging this tag-bump PR. [OPS-411]"
+              FAILED=$((FAILED + 1))
+            fi
+          done < /tmp/changed-images.txt
+
+          echo ""
+          echo "image-verify summary: ${PASSED} passed, ${FAILED} failed"
+
+          if [ "${FAILED}" -gt 0 ]; then
+            echo "::error::image-verify gate FAIL — ${FAILED} image(s) referenced in this PR do not exist in Harbor."
+            echo "Remediation: push the missing image(s) to Harbor before merging."
+            echo "Context: OPS-411 — pre-merge image-existence gate"
+            exit 1
+          fi
+
+          echo "image-verify gate PASS — all ${PASSED} image(s) verified in Harbor."

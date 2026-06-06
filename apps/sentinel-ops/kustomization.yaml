@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# NOTE: root namespace: field removed (OPS-249).
+# The root namespace: creates a NamespaceTransformer that overrides ALL
+# namespaced resources — including the cross-namespace RoleBinding
+# etcd-backup-etcd-reader that must live in openshift-etcd.
+# Replaced with namespace-transformer.yaml (unsetOnly: true) so only resources
+# without an explicit namespace receive sentinel-ops.
+transformers:
+  - namespace-transformer.yaml
+resources:
+  - serviceaccount.yaml
+  - external-secrets.yaml
+  - etcd-backup-rbac.yaml
+  - ci-drift-detector-rbac.yaml
+  - configmaps/ops-scripts.yaml
+  - configmaps/compliance-scripts.yaml
+  - configmaps/etcd-backup-scripts.yaml
+  - cronjobs/grafana-health.yaml
+  - cronjobs/compliance-check.yaml
+  - cronjobs/minio-replicate.yaml
+  - cronjobs/etcd-backup.yaml
+  - cronjobs/etcd-backup-verify.yaml
+  - jobs/etcd-backup-verify-bootstrap.yaml
+  - network-policies.yaml

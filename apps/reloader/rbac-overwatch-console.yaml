@@ -1,0 +1,33 @@
+---
+# SEC-58: Per-namespace Role + RoleBinding for overwatch-console namespace.
+# Reloader needs get/list/watch on secrets here because overwatch-console
+# uses annotation: secret.reloader.stakater.com/reload: overwatch-console-credentials
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reloader-secret-watcher
+  namespace: overwatch-console
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reloader-secret-watcher
+  namespace: overwatch-console
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: reloader-secret-watcher
+subjects:
+  - kind: ServiceAccount
+    name: reloader
+    namespace: reloader

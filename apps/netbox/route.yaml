@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: netbox
+  namespace: netbox
+spec:
+  host: netbox.208.haist.farm
+  to:
+    kind: Service
+    name: netbox
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mas-config
+  namespace: matrix
+data:
+  config.yaml: |
+    http:
+      public_base: https://matrix.haist.farm/
+      issuer: https://matrix.haist.farm/
+      listeners:
+        - name: web
+          resources:
+            - name: discovery
+            - name: human
+            - name: oauth
+            - name: compat
+            - name: graphql
+            - name: assets
+            - name: health
+          binds:
+            - address: "[::]:8080"
+          proxy_protocol: false
+
+    database:
+      uri: postgresql://mas_user:${MAS_DB_PASSWORD}@matrix-postgresql:5432/mas
+      min_connections: 0
+      max_connections: 10
+      connect_timeout: 30
+      idle_timeout: 600
+      max_lifetime: 1800
+
+    matrix:
+      homeserver: matrix.208.haist.farm
+      secret: "${MAS_SHARED_SECRET}"
+      endpoint: "http://synapse:8008"
+
+    secrets:
+      encryption: "${MAS_ENCRYPTION_SECRET}"
+      keys:
+        - key_file: /keys/rsa.pem
+        - key_file: /keys/ec.pem
+
+    passwords:
+      enabled: true
+      minimum_complexity: 3
+      schemes:
+        - version: 1
+          algorithm: bcrypt
+        - version: 2
+          algorithm: argon2id
+
+    account:
+      email_change_allowed: true
+      displayname_change_allowed: true
+      password_registration_enabled: false
+      password_change_allowed: true
+
+    upstream_oauth2:
+      providers:
+        - id: 01KRKX82WHHQZTEPDW237Q2TFK
+          synapse_idp_id: "oidc-authentik"
+          issuer: "https://auth-next.208.haist.farm/application/o/matrix-authentication-service/"
+          human_name: "Authentik"
+          brand_name: "authentik"
+          client_id: "${MAS_AUTHENTIK_CLIENT_ID}"
+          client_secret: "${MAS_AUTHENTIK_CLIENT_SECRET}"
+          token_endpoint_auth_method: client_secret_post
+          scope: "openid email profile"
+          discovery_mode: oidc
+          pkce_method: auto
+          claims_imports:
+            subject:
+              template: "{{ user.sub }}"
+            localpart:
+              action: suggest
+              template: "{{ user.preferred_username }}"
+            displayname:
+              action: suggest
+              template: "{{ user.name }}"
+            email:
+              action: suggest
+              template: "{{ user.email }}"
+              set_email_verification: always

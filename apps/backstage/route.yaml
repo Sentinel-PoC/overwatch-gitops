@@ -1,0 +1,16 @@
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  host: backstage.208.haist.farm
+  to:
+    kind: Service
+    name: backstage
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

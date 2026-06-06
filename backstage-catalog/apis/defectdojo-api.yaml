@@ -1,0 +1,37 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: defectdojo-api
+  description: DefectDojo REST API for vulnerability and finding management
+  links:
+    - url: https://defectdojo.208.haist.farm
+      title: DefectDojo Dashboard
+      icon: dashboard
+  tags:
+    - security
+    - vulnerability-management
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: DefectDojo API
+      version: "2.x"
+      description: DefectDojo ASDB platform API with CI integration for Trivy and Gitleaks
+    servers:
+      - url: https://defectdojo.208.haist.farm/api/v2
+    paths:
+      /findings:
+        get:
+          summary: List findings
+      /import-scan:
+        post:
+          summary: Import scan results
+      /products:
+        get:
+          summary: List products

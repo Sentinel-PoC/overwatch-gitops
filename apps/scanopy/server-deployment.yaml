@@ -1,0 +1,151 @@
+---
+# OPS-398: Scanopy server Deployment.
+# Standard container, no special privileges required.
+# Upstream image: ghcr.io/scanopy/scanopy/server:v0.16.2
+# Mirrored and signed to Harbor in OPS-1085 (2026-05-30).
+#
+# Public URL: https://scanopy.208.haist.farm (OKD Route, TLS edge termination).
+# The server exposes port 60072.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scanopy-server
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/instance: scanopy
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scanopy
+      app.kubernetes.io/component: server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scanopy
+        app.kubernetes.io/instance: scanopy
+        app.kubernetes.io/component: server
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      serviceAccountName: scanopy-server
+      # OPS-1122: Disable K8s service link env var injection.
+      # OKD auto-injects SCANOPY_SERVER_PORT=tcp://... (from the scanopy-server Service),
+      # which conflicts with scanopy's SCANOPY_ prefix config parsing.
+      # Error: "invalid type: found string tcp://..., expected u16 for key SERVER_PORT"
+      # Disabling service links prevents this conflict. DNS-based discovery is unaffected.
+      enableServiceLinks: false
+      containers:
+        - name: scanopy-server
+          image: harbor.208.haist.farm/sentinel/scanopy-server@sha256:5360dfce64a6ab2e9fc92795cdd6c6df6da6bf3e4ce0c54998f94114c574caca
+          imagePullPolicy: IfNotPresent
+          # SEC-122: run as nobody (uid=65534). The server only listens on port 60072
+          # (> 1024; no root needed) and connects to postgres. Image has no explicit USER
+          # directive (ran as root previously). uid=65534 (nobody) satisfies the
+          # require-run-as-nonroot Kyverno policy while requiring no image rebuild.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 60072
+              protocol: TCP
+          env:
+            - name: SCANOPY_LOG_LEVEL
+              value: info
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: scanopy-server
+                  key: db_password
+            - name: SCANOPY_DATABASE_URL
+              value: "postgresql://postgres:$(POSTGRES_PASSWORD)@scanopy-postgresql.scanopy.svc.cluster.local:5432/scanopy"
+            - name: SCANOPY_WEB_EXTERNAL_PATH
+              value: /app/static
+            - name: SCANOPY_PUBLIC_URL
+              value: "https://scanopy.208.haist.farm"
+            # OPS-1123: Daemon URL updated to the dedicated LXC on 192.168.12.0/24.
+            # The in-cluster daemon (replicas=0) cannot ARP-scan 192.168.12.0/24.
+            # New daemon: LXC 305 on pve4-alienware at 192.168.12.93:60073
+            # (privileged, NET_RAW, SCANOPY_INTERFACES=eth0, scope 192.168.12.0/24).
+            # OKD pods cannot reach 192.168.12.0/24 directly (cluster subnet isolation).
+            # Routing: server pod → Pangolin at scanopy-daemon-api.208.haist.farm
+            # → sentinel-vm-services.yml router-scanopy-daemon-api-208
+            # → service-scanopy-daemon-208 → http://192.168.12.93:60073
+            # Pangolin is reachable from OKD pods (confirmed: curl → 200).
+            - name: SCANOPY_INTEGRATED_DAEMON_URL
+              value: "https://scanopy-daemon-api.208.haist.farm"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 60072
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 60072
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+# Headless service entry for daemon pod (no Service needed — daemon uses hostNetwork,
+# but server needs to reference daemon health port 60073).
+# We expose a ClusterIP Service for the daemon health port so the server can reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scanopy-daemon
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: daemon
+spec:
+  type: ClusterIP
+  ports:
+    - name: health
+      port: 60073
+      targetPort: 60073
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: daemon
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scanopy-server
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/instance: scanopy
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 60072
+      targetPort: 60072
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: server

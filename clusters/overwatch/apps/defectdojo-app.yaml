@@ -1,0 +1,65 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: defectdojo
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: defectdojo
+      targetRevision: 1.9.12
+      helm:
+        valueFiles:
+          - $values/clusters/overwatch/apps/defectdojo/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/defectdojo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: defectdojo
+  ignoreDifferences:
+    - kind: PersistentVolumeClaim
+      jqPathExpressions:
+        - .spec.resources.requests.storage
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef
+        - .spec.target
+    - group: apps
+      kind: StatefulSet
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates
+        - .spec.persistentVolumeClaimRetentionPolicy
+        - .spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]
+    # defectdojo-initializer Job -- k8s Job controller populates controller-uid
+    # in .spec.selector and pod template labels at Job creation time. Those
+    # fields cannot exist in git (dynamic UUIDs assigned by the API server).
+    # Same class as ESO runtime annotations -- ignore what the controller owns,
+    # not what would mask real chart changes.
+    # Chart maintainers set disableHooks: true intentionally for ArgoCD compat,
+    # so this Job is tracked as a normal resource rather than a helm hook.
+    - group: batch
+      kind: Job
+      jqPathExpressions:
+        - .spec.selector.matchLabels["batch.kubernetes.io/controller-uid"]
+        - .spec.selector.matchLabels["controller-uid"]
+        - .spec.template.metadata.labels["batch.kubernetes.io/controller-uid"]
+        - .spec.template.metadata.labels["batch.kubernetes.io/job-name"]
+        - .spec.template.metadata.labels["controller-uid"]
+        - .spec.template.metadata.labels["job-name"]
+        - .status
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+      - Replace=true

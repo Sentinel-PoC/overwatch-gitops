@@ -1,0 +1,26 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: iac-control
+  description: IaC orchestration VM - HAProxy LB, dnsmasq, keepalived, Ansible/Terraform runner
+  annotations:
+    grafana/dashboard-url: https://grafana.208.haist.farm
+  links:
+    - url: http://192.168.12.210:8405/stats
+      title: HAProxy Stats
+      icon: dashboard
+  tags:
+    - iac
+    - orchestration
+    - haproxy
+    - dns
+    - infrastructure
+    - overwatch
+spec:
+  type: vm
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-pve

@@ -1,0 +1,247 @@
+---
+# OPS-701: attest composite — SLSA v1.0 + SBOM attestation (legacy .att tag)
+#
+# Purpose:
+#   Generate a SLSA v1.0 provenance predicate and attest it against a container
+#   image using cosign. Also attests the CycloneDX SBOM if sbom-file is present.
+#   Attestations land as legacy sha256-XXX.att tags (verifiable via
+#   cosign verify-attestation). See OCI 1.1 note below.
+#
+# Failure policy: MUST-SUCCEED.
+#   Attestation is a critical supply-chain step; failed attestation means the image
+#   has no provenance. Exit non-zero on any cosign failure.
+#
+# OCI 1.1 attestation ceiling (OPS-699 §4 Pattern D / OPS-696 Layer 7):
+#   cosign attest does NOT support --registry-referrers-mode at any released version
+#   (audited v2.4.3, v2.4.4, v2.4.5, v2.5.0, v2.6.0, v2.6.3, v3.0.0, v3.0.6, main
+#   by attest-composite-judge, reviews #714 + #717). The flag is registered only by
+#   RegistryExperimentalOptions.AddFlags(), which is embedded into:
+#     AttachSBOMOptions (options/attach.go:71) — cosign attach sbom ✓
+#     SignOptions (options/sign.go:52) — cosign sign ✓ (used in sign composite)
+#   AttestOptions (options/attest.go) embeds Registry RegistryOptions only.
+#   Bumping cosign version does not fix this; no upstream issue is open.
+#
+#   Operator decision (OPS-701, 2026-05-16): accept legacy .att tag for attestation.
+#   Signature (sign composite, PR #215) is still OCI 1.1 accessory via cosign sign.
+#   If a future Kyverno policy requires OCI 1.1-linked attestation, file a new OPS
+#   to evaluate oras attach or an upstream cosign PR.
+#
+#   Paths that were tried and falsified (source-cited, for audit trail):
+#   - "cosign dsse sign": not registered at v2.4.3 (commands.go:95-126, no Dsse()).
+#   - "cosign attach attestation --registry-referrers-mode": AttachAttestationOptions
+#     lacks RegistryExperimentalOptions (compare AttachSBOMOptions which DOES embed it).
+#   - "cosign attest --registry-referrers-mode": AttestOptions lacks embed (8-version audit).
+#
+# Python predicate isolation (OPS-699 §4 Pattern B fix):
+#   SLSA predicate generation is in generate-slsa-predicate.py (this directory).
+#   Previously: 50-line inline Python in bash heredoc (hard to test, layers 5–6).
+#   Now: versioned standalone script with argparse + validation + clear exit codes.
+#
+# Root patterns fixed (OPS-699 §4):
+#   - Pattern A: this composite owns attestation only; no scanning, no reporting
+#   - Pattern B: Python isolated to generate-slsa-predicate.py
+#   - Pattern C: set -euo pipefail intentional (must-succeed)
+#   - Pattern D: OCI 1.1 mode explicit; predicate type slsaprovenance1; version pinned
+#
+# Vendored in overwatch-gitops per OPS-239.
+# Source of truth: sentinel-admin/sentinel-iac/.forgejo/actions/attest/action.yml
+# Last synced: OPS-701 v3 2026-05-16 (legacy .att tag; OCI 1.1 ceiling documented)
+
+name: "Cosign Attest (SLSA v1.0 + SBOM, legacy .att tag)"
+description: >
+  Generate SLSA v1.0 provenance predicate and attest via cosign attest (legacy
+  sha256-XXX.att tag). Also attests CycloneDX SBOM if present. Verifiable via
+  cosign verify-attestation. Must-succeed: exits non-zero if attestation fails.
+
+inputs:
+  image-ref:
+    description: >
+      Fully-qualified image reference with digest (required):
+      harbor.208.haist.farm/sentinel/myapp@sha256:abc123
+      Digest is required for attestation subject linkage.
+    required: true
+
+  cosign-key:
+    description: "PEM-encoded cosign private key (from secret/cosign private_key)"
+    required: true
+
+  cosign-password:
+    description: "Cosign key passphrase (empty string if none)"
+    required: false
+    default: ""
+
+  sbom-file:
+    description: >
+      Path to CycloneDX SBOM file to attest alongside SLSA provenance.
+      Produced by the scan composite (sbom.cyclonedx.json). Skipped if absent.
+    required: false
+    default: "sbom.cyclonedx.json"
+
+  cosign-version:
+    description: >
+      Pinned cosign version. If runner already has this version, install is skipped.
+      cosign v2.4.3 is the validated version on iac-control (OPS-701).
+    required: false
+    default: "v2.4.3"
+
+outputs:
+  predicate-file:
+    description: "Path to generated SLSA predicate JSON (for audit trail)"
+    value: ${{ steps.generate-predicate.outputs.predicate_file }}
+
+runs:
+  using: "composite"
+  steps:
+    # ---------------------------------------------------------------
+    # STEP 1: Ensure cosign at pinned version (same check as sign composite)
+    # ---------------------------------------------------------------
+    - name: Ensure cosign at pinned version
+      shell: bash
+      env:
+        COSIGN_VERSION: ${{ inputs.cosign-version }}
+      run: |
+        set -euo pipefail
+        echo "=== OPS-701 attest: cosign version check ==="
+
+        INSTALLED_VERSION=""
+        if command -v cosign >/dev/null 2>&1; then
+          INSTALLED_VERSION=$(cosign version 2>/dev/null | grep -oE 'GitVersion:[[:space:]]+[v0-9.]+' | awk '{print $2}' || echo "")
+          echo "Runner has cosign: ${INSTALLED_VERSION}"
+        fi
+
+        if [ "${INSTALLED_VERSION}" = "${COSIGN_VERSION}" ]; then
+          echo "cosign ${COSIGN_VERSION} already installed — skipping download"
+        else
+          echo "Installing cosign ${COSIGN_VERSION}..."
+          ARCH=$(uname -m)
+          case "${ARCH}" in
+            x86_64) ARCH_SLUG="amd64" ;;
+            aarch64|arm64) ARCH_SLUG="arm64" ;;
+            *) echo "::error::Unsupported arch: ${ARCH}"; exit 1 ;;
+          esac
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          COSIGN_URL="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-${OS}-${ARCH_SLUG}"
+          curl -sL "${COSIGN_URL}" -o /tmp/cosign-download
+          chmod +x /tmp/cosign-download
+          sudo mv /tmp/cosign-download /usr/local/bin/cosign
+          echo "cosign installed: ${COSIGN_VERSION}"
+        fi
+
+        cosign version 2>/dev/null | head -4 || true
+
+    # ---------------------------------------------------------------
+    # STEP 2: Generate SLSA v1.0 provenance predicate
+    #
+    # Uses the isolated Python script (generate-slsa-predicate.py) in
+    # this composite's directory. --validate flag catches structural
+    # errors (missing buildDefinition, leaked outer in-toto fields) at
+    # generation time rather than at cosign invocation time.
+    # ---------------------------------------------------------------
+    - name: Generate SLSA v1.0 predicate
+      id: generate-predicate
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+      run: |
+        set -euo pipefail
+        echo "=== OPS-701 attest: Generate SLSA v1.0 predicate ==="
+
+        # Locate the Python script relative to action file directory.
+        # GITHUB_ACTION_PATH is set by the runner to the composite's directory.
+        SCRIPT_PATH="${GITHUB_ACTION_PATH}/generate-slsa-predicate.py"
+
+        if [ ! -f "${SCRIPT_PATH}" ]; then
+          echo "::error::SLSA predicate script not found at ${SCRIPT_PATH}"
+          echo "::error::Expected: .forgejo/actions/attest/generate-slsa-predicate.py"
+          exit 1
+        fi
+
+        python3 "${SCRIPT_PATH}" \
+          --output slsaprovenance.json \
+          --validate
+
+        # Verify the output is valid JSON
+        python3 -m json.tool slsaprovenance.json > /dev/null && echo "Predicate JSON is valid"
+
+        echo "predicate_file=slsaprovenance.json" >> "${GITHUB_OUTPUT}"
+
+    # ---------------------------------------------------------------
+    # STEP 3: Attest SLSA provenance (legacy sha256-XXX.att tag)
+    #
+    # cosign attest does not support --registry-referrers-mode at any released
+    # version (audited v2.4.3 through v3.0.6 + main; AttestOptions lacks
+    # RegistryExperimentalOptions embed). Operator accepted legacy tag mode.
+    # Verifiable via: cosign verify-attestation --key cosign.pub IMAGE_REF
+    #
+    # --tlog-upload=false: matches old security-scan composite (d2475da:479).
+    # Platform does not use Sigstore public Rekor; suppresses transparency.dev calls.
+    # --replace: replaces prior attestation of same type on re-runs (avoids duplicates).
+    # --yes: non-interactive confirmation (required in CI).
+    # ---------------------------------------------------------------
+    - name: Attest SLSA provenance
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        COSIGN_KEY: ${{ inputs.cosign-key }}
+        COSIGN_PASSWORD: ${{ inputs.cosign-password }}
+      run: |
+        set -euo pipefail
+        echo "=== OPS-701 attest: SLSA v1.0 provenance attestation ==="
+        echo "Image: ${IMAGE_REF}"
+
+        COSIGN_KEY_FILE=$(mktemp /tmp/cosign-XXXXXX.key)
+        chmod 600 "${COSIGN_KEY_FILE}"
+        printf '%s' "${COSIGN_KEY}" > "${COSIGN_KEY_FILE}"
+        trap "rm -f ${COSIGN_KEY_FILE}" EXIT
+
+        echo "Attesting SLSA v1.0 provenance (legacy .att tag)..."
+        COSIGN_PASSWORD="${COSIGN_PASSWORD}" cosign attest \
+          --key "${COSIGN_KEY_FILE}" \
+          --predicate slsaprovenance.json \
+          --type slsaprovenance1 \
+          --tlog-upload=false \
+          --replace \
+          --yes \
+          "${IMAGE_REF}"
+
+        echo "SLSA v1.0 provenance attestation uploaded (sha256-XXX.att tag)"
+
+    # ---------------------------------------------------------------
+    # STEP 4: Attest CycloneDX SBOM (if present)
+    #
+    # Same legacy cosign attest approach as STEP 3 (no --registry-referrers-mode).
+    # Skipped without error if sbom-file is absent (scan composite may not have run).
+    # ---------------------------------------------------------------
+    - name: Attest CycloneDX SBOM
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        COSIGN_KEY: ${{ inputs.cosign-key }}
+        COSIGN_PASSWORD: ${{ inputs.cosign-password }}
+        SBOM_FILE: ${{ inputs.sbom-file }}
+      run: |
+        set -euo pipefail
+        echo "=== OPS-701 attest: CycloneDX SBOM attestation ==="
+
+        if [ ! -f "${SBOM_FILE}" ]; then
+          echo "::warning::SBOM file not found at ${SBOM_FILE} — skipping SBOM attestation"
+          echo "::warning::Run the scan composite before attest to produce the SBOM"
+          exit 0
+        fi
+
+        COSIGN_KEY_FILE=$(mktemp /tmp/cosign-XXXXXX.key)
+        chmod 600 "${COSIGN_KEY_FILE}"
+        printf '%s' "${COSIGN_KEY}" > "${COSIGN_KEY_FILE}"
+        trap "rm -f ${COSIGN_KEY_FILE}" EXIT
+
+        echo "Attesting CycloneDX SBOM: ${SBOM_FILE}"
+        COSIGN_PASSWORD="${COSIGN_PASSWORD}" cosign attest \
+          --key "${COSIGN_KEY_FILE}" \
+          --predicate "${SBOM_FILE}" \
+          --type cyclonedx \
+          --tlog-upload=false \
+          --replace \
+          --yes \
+          "${IMAGE_REF}"
+
+        echo "CycloneDX SBOM attestation uploaded (sha256-XXX.att tag)"

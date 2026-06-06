@@ -1,0 +1,52 @@
+# OPS-1003: ArgoCD Application for monthly ArgoCD token rotation CronJob.
+#
+# Deploys all resources in apps/argocd-token-rotation/:
+#   - Namespace
+#   - ServiceAccount + SCC ClusterRoleBinding (anyuid)
+#   - ExternalSecret (reads Vault secret/argocd-token-rotation → K8s Secret)
+#   - CronJob (runs 03:00 UTC on the 1st of every month)
+#   - NetworkPolicies (deny-all + allow argocd+vault:443 + dns:53)
+#
+# OPERATOR GATE: Do NOT sync this Application until you have seeded Vault:
+#   vault kv put secret/argocd-token-rotation \
+#     argocd_admin_password="<from openshift-gitops-cluster secret>" \
+#     vault_token="<periodic orphan token with argocd-token-rotation policy>"
+# See apps/argocd-token-rotation/namespace.yaml for the full setup procedure.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-token-rotation
+  namespace: openshift-gitops
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+  annotations:
+    ops.overwatch/issue: OPS-1003
+    ops.overwatch/operator-gate: >
+      Vault secret/argocd-token-rotation must be seeded before first sync.
+      See apps/argocd-token-rotation/namespace.yaml for setup commands.
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/argocd-token-rotation
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd-token-rotation
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

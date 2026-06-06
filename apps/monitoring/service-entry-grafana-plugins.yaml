@@ -1,0 +1,81 @@
+---
+# OPS-640: Allow Grafana pod egress to grafana.com for plugin downloads
+# Root cause: Istio mesh is in REGISTRY_ONLY outbound mode; without these ServiceEntries
+# external hosts are unreachable and the plugin.backgroundinstaller module crashes Grafana at startup.
+# Plugins required: grafana-opensearch-datasource (Wazuh), yesoreyeram-infinity-datasource (MISP/GreyNoise/AbuseIPDB)
+# See: clusters/overwatch/apps/monitoring/grafana/values.yaml plugins: section
+#
+# Download flow:
+#   1. grafana.com/api/plugins/<name>/versions   → get latest version metadata
+#   2. storage.googleapis.com/grafana-plugins-catalog/<name>/... → download .zip archive
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: grafana-plugin-registry
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    security.sentinel/egress: grafana-plugins
+    security.sentinel/issue: OPS-640
+spec:
+  hosts:
+    - grafana.com
+    - grafana.net
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+    - number: 80
+      name: http
+      protocol: HTTP
+  resolution: DNS
+  location: MESH_EXTERNAL
+---
+# OPS-640: Allow Grafana pod egress to storage.googleapis.com for plugin archive downloads
+# Plugin zip files are hosted on Google Cloud Storage, not grafana.com directly.
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: grafana-plugin-storage
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    security.sentinel/egress: grafana-plugins
+    security.sentinel/issue: OPS-640
+spec:
+  hosts:
+    - storage.googleapis.com
+    - "*.googleapis.com"
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+  resolution: DNS
+  location: MESH_EXTERNAL
+---
+# OPS-605 Phase 4: Allow Grafana egress to Authentik (auth-next.208.haist.farm)
+# Required for OIDC token exchange in auth.generic_oauth after Authentik cutover.
+# auth-next.208.haist.farm resolves to 192.168.12.168 (Pangolin VIP) via DNS.
+# REGISTRY_ONLY outbound mode blocks this without a ServiceEntry.
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: grafana-authentik-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    security.sentinel/egress: authentik-oidc
+    security.sentinel/issue: OPS-605
+spec:
+  hosts:
+    - auth-next.208.haist.farm
+  addresses:
+    - 192.168.12.168
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+  resolution: STATIC
+  location: MESH_EXTERNAL
+  endpoints:
+    - address: 192.168.12.168

@@ -1,0 +1,68 @@
+---
+# SEC-58: Per-namespace Role + RoleBinding for defectdojo namespace.
+# Reloader needs get/list/watch on secrets here because defectdojo-django
+# uses reloader.stakater.com/auto: "true" to auto-restart on ConfigMap/Secret
+# changes (e.g. ESO-synced OIDC creds in defectdojo-extrasecrets).
+# Added OPS-641: defectdojo OIDC backend not activating without pod restart.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reloader-secret-watcher
+  namespace: defectdojo
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reloader-secret-watcher
+  namespace: defectdojo
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: reloader-secret-watcher
+subjects:
+  - kind: ServiceAccount
+    name: reloader
+    namespace: reloader
+---
+# SEC-58: Per-namespace Role + RoleBinding for matrix namespace.
+# Reloader needs get/list/watch on secrets here because element-web and mas
+# use reloader.stakater.com/auto: "true" (auto mode watches all secrets in ns).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reloader-secret-watcher
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reloader-secret-watcher
+  namespace: matrix
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: reloader-secret-watcher
+subjects:
+  - kind: ServiceAccount
+    name: reloader
+    namespace: reloader

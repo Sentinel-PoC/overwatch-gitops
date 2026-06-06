@@ -1,0 +1,82 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# OPS-768: Add explicit kustomization to apps/plane/ so ArgoCD uses kustomize
+# build instead of raw directory listing. Without this file, ArgoCD reads every
+# .yaml in the directory as a standalone resource — patch files are treated as
+# full Deployments and K8s validation fails ("containers[0].image: Required value").
+#
+# ── Inventory split ──────────────────────────────────────────────────────────
+#
+# REAL RESOURCES (stand-alone K8s objects managed exclusively here):
+#   external-secret.yaml       — ExternalSecret for Plane secrets
+#   keycloak-provider-configmap.yaml — Keycloak OIDC provider ConfigMap
+#   network-policies.yaml      — NetworkPolicy default-deny baseline (OPS-747)
+#   networkpolicy.yaml         — SEC-59 compensating control (axios CVE)
+#   plane-pg-iscsi-pv.yaml     — iSCSI PersistentVolume for PostgreSQL
+#   postgresql-deployment.yaml — Custom PostgreSQL Deployment (replaces Helm bundled)
+#   postgresql-pvc.yaml        — PersistentVolumeClaim for PostgreSQL data
+#   postgresql-service.yaml    — Service for PostgreSQL
+#   route.yaml                 — OpenShift Route for plane.208.haist.farm
+#   scc.yaml                   — ClusterRoleBinding for anyuid SCC
+#
+# SSA OVERLAY PATCHES (partial Deployment/StatefulSet specs — NOT standalone resources):
+#   These target Helm-rendered Deployments from the plane-ce 1.4.1 chart
+#   (ArgoCD source 1). They carry:
+#     argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false
+#     argocd.argoproj.io/compare-options: IgnoreExtraneous
+#   ArgoCD applies them via Server-Side Apply field-merge against the existing
+#   Helm-owned Deployment. kustomize passes them through unchanged; the SSA
+#   semantics are handled by ArgoCD at apply time. They CANNOT be expressed as
+#   kustomize patches: kustomize patches may only target resources within this
+#   kustomization's resource graph, not resources rendered by a sibling Helm
+#   source. The SSA + IgnoreExtraneous pattern is the correct escape hatch for
+#   multi-source ArgoCD overlays.
+#
+resources:
+  # Real resources
+  - external-secret.yaml
+  - keycloak-provider-configmap.yaml
+  # OPS-1182: kyverno-exception.yaml RE-ADDED (un-tombstoned). It was live all along
+  # via prune:false; re-tracking removes that fragility (require-resource-limits Enforce
+  # depends on it) and enables the require-labels Enforce flip. Job kind added for chart jobs.
+  - kyverno-exception.yaml
+  # (history) OPS-126 had removed it on the theory SSA patches supply
+  # app.kubernetes.io/name labels + memory limits to all chart workloads.
+  # The broad PolicyException covering all plane ns Pods/StatefulSets/Deployments
+  # is no longer needed.
+  - network-policies.yaml
+  - networkpolicy.yaml
+  - plane-pg-iscsi-pv.yaml
+  - postgresql-deployment.yaml
+  - postgresql-pvc.yaml
+  - postgresql-service.yaml
+  - route.yaml
+  - scc.yaml
+  # SSA overlay patches — see comment block above for why these are resources,
+  # not kustomize patches.
+  # Deployment patches (plane-ce 1.4.1 Deployments):
+  - plane-admin-cmd-patch.yaml
+  - plane-api-stability-patch.yaml
+  - plane-beat-worker-security-patch.yaml
+  - plane-live-security-patch.yaml
+  - plane-space-cmd-patch.yaml
+  - plane-web-cmd-patch.yaml
+  - plane-worker-security-patch.yaml
+  # OPS-951: livenessProbes merged into sibling patches (amend-3; see plane-web-cmd-patch.yaml,
+  # plane-worker-security-patch.yaml, plane-beat-worker-security-patch.yaml)
+  # OPS-1165 StatefulSet backstage patches REMOVED (OPS-1185): in this multi-source app a
+  # same-named StatefulSet from this kustomize source OVERRIDES (not merges) the Helm-rendered
+  # StatefulSet, producing a spec-less object -> "containers: Required value" + STS spec
+  # immutability rejection -> whole plane app sync FAILED. Same lesson as OPS-878/OPS-785.
+  # backstage.io/component for plane-{minio,rabbitmq,redis}-wl will be delivered via a Kyverno
+  # mutate (admission-time, Enforce-safe) under OPS-1186/backstage work instead.
+  # StatefulSet SPEC patches REMOVED (OPS-878 / OPS-785):
+  #   PR #287 (OPS-785) deleted plane-{redis,rabbitmq,minio}-wl-patch.yaml because
+  #   K8s 1.34 SSA cannot field-merge against chart-rendered StatefulSets via the
+  #   prior patch mechanism. The kustomization-resource entries were not removed
+  #   then; this PR (OPS-878) removes the dangling refs so kustomize build succeeds.
+  #
+  #   Replacement labels+limits delivery is tracked under OPS-858: a Kyverno
+  #   MutateExisting policy retroactively adds app.kubernetes.io/name labels +
+  #   resource limits to the 3 StatefulSets. Until OPS-858 lands, the StatefulSets
+  #   run with chart defaults (no custom labels/limits). Acceptable interim state.

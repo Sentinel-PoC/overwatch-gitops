@@ -1,0 +1,223 @@
+---
+# OPS-701: report composite — DefectDojo SBOM + OSV upload (non-fatal observability)
+#
+# Purpose:
+#   Upload scan artifacts (CycloneDX SBOM, OSV findings) to DefectDojo for
+#   vulnerability tracking and supply-chain observability. Strictly non-fatal:
+#   a DefectDojo outage or DNS failure MUST NOT prevent image signing or attestation.
+#
+# Failure policy: NON-FATAL end-to-end.
+#   - Every curl call uses explicit exit-code capture (CURL_EXIT=0; cmd || CURL_EXIT=$?).
+#   - HTTP 4xx/5xx produces ::warning:: annotation; step continues.
+#   - Network/DNS failures (curl exit 6, 7) produce ::warning:: annotation; step continues.
+#   - set -euo pipefail is NOT used here. No pipeline abort.
+#   - This composite has NO outputs. It is a fire-and-forget observability step.
+#
+# OPS-697 context: DefectDojo DNS resolution fails in the forgejo-runner context
+#   (runner DNS resolves defectdojo.208.haist.farm to Pangolin VIP, but the runner
+#   network path to Pangolin is broken). This composite handles that gracefully:
+#   curl exit 6 (CURLE_COULDNT_RESOLVE_HOST) → ::warning:: → continue.
+#   Caller workflows can skip this composite entirely when DefectDojo is known-down.
+#
+# Root patterns fixed (OPS-699 §4):
+#   - Pattern A: this composite owns reporting only; cosign is in sign+attest composites
+#   - Pattern C: no global set -euo pipefail; per-call CURL_EXIT capture throughout
+#
+# Vendored in overwatch-gitops per OPS-239.
+# Source of truth: sentinel-admin/sentinel-iac/.forgejo/actions/report/action.yml
+# Last synced: OPS-701 initial creation 2026-05-16
+
+name: "DefectDojo Report (SBOM + OSV, non-fatal)"
+description: >
+  Upload CycloneDX SBOM and OSV findings to DefectDojo. Non-fatal:
+  DefectDojo outages, DNS failures, and HTTP errors emit ::warning:: only.
+  Caller can skip this composite when DefectDojo is known-unreachable.
+
+inputs:
+  image-ref:
+    description: "Image reference — used in DefectDojo report metadata"
+    required: true
+
+  defectdojo-url:
+    description: "DefectDojo base URL"
+    required: false
+    default: "https://defectdojo.208.haist.farm"
+
+  defectdojo-token:
+    description: "DefectDojo API token"
+    required: true
+
+  defectdojo-engagement-id:
+    description: >
+      DefectDojo engagement ID (numeric). If empty, auto-creates engagement
+      using defectdojo-product-name.
+    required: false
+    default: ""
+
+  defectdojo-product-name:
+    description: "DefectDojo product name (used when engagement-id is empty)"
+    required: false
+    default: "Sentinel Platform"
+
+  sbom-file:
+    description: >
+      Path to CycloneDX SBOM file to upload. Produced by the scan composite.
+      Skipped without error if file is absent.
+    required: false
+    default: "sbom.cyclonedx.json"
+
+  osv-file:
+    description: >
+      Path to OSV scan results JSON file. Produced by the scan composite.
+      Skipped without error if file is absent or contains no results.
+    required: false
+    default: "osv.json"
+
+runs:
+  using: "composite"
+  steps:
+    # ---------------------------------------------------------------
+    # STEP 1: Upload SBOM to DefectDojo
+    #
+    # Non-fatal: curl exit codes and HTTP errors both produce ::warning::.
+    # OPS-697: curl exit 6 (CURLE_COULDNT_RESOLVE_HOST) handled explicitly.
+    # Skip without error if sbom-file is absent.
+    # ---------------------------------------------------------------
+    - name: Upload SBOM to DefectDojo
+      shell: bash
+      env:
+        DD_URL: ${{ inputs.defectdojo-url }}
+        DD_TOKEN: ${{ inputs.defectdojo-token }}
+        DD_ENGAGEMENT_ID: ${{ inputs.defectdojo-engagement-id }}
+        DD_PRODUCT_NAME: ${{ inputs.defectdojo-product-name }}
+        IMAGE_REF: ${{ inputs.image-ref }}
+        SBOM_FILE: ${{ inputs.sbom-file }}
+      run: |
+        echo "=== OPS-701 report: Upload SBOM to DefectDojo ==="
+
+        if [ ! -f "${SBOM_FILE}" ]; then
+          echo "::warning::SBOM file not found at ${SBOM_FILE} — skipping SBOM upload"
+          echo "::warning::Run the scan composite before report to produce the SBOM"
+          exit 0
+        fi
+
+        # [OPS-863] Strip digest for SHA-stable test_title.
+        # IMAGE_REF is digest-based (harbor.../repo@sha256:XXX). DefectDojo creates
+        # a new test per unique test_title — if test_title embeds the digest, a new
+        # test is created each build and close_old_findings never fires across builds.
+        IMAGE_STABLE="${IMAGE_REF%%@sha256:*}"
+
+        if [ -n "${DD_ENGAGEMENT_ID}" ]; then
+          ENGAGEMENT_FIELDS="-F engagement=${DD_ENGAGEMENT_ID}"
+        else
+          ENGAGEMENT_FIELDS="-F product_name=${DD_PRODUCT_NAME} -F engagement_name=sentinel-platform-sbom -F auto_create_context=true"
+        fi
+
+        # OPS-696 + OPS-697: capture curl exit code explicitly.
+        # set -euo pipefail is NOT set in this composite step — no pipeline abort.
+        # curl exit 6 = CURLE_COULDNT_RESOLVE_HOST (OPS-697 DNS context defect).
+        # curl exit 7 = CURLE_COULDNT_CONNECT.
+        # Both are informational; DefectDojo upload is observability-only.
+        CURL_EXIT=0
+        RESPONSE=$(curl -sk -X POST "${DD_URL}/api/v2/reimport-scan/" \
+          -H "Authorization: Token ${DD_TOKEN}" \
+          -F "scan_type=CycloneDX Scan" \
+          ${ENGAGEMENT_FIELDS} \
+          -F "test_title=SBOM: ${IMAGE_STABLE}" \
+          -F "file=@${SBOM_FILE}" \
+          -F "active=true" \
+          -F "verified=false" \
+          -F "close_old_findings=false" \
+          -F "minimum_severity=Info" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "tags=sbom,cyclonedx,supply-chain,ops-701" \
+          -w "\n%{http_code}" 2>/dev/null) || CURL_EXIT=$?
+
+        if [ "${CURL_EXIT}" -ne 0 ]; then
+          echo "::warning::DefectDojo SBOM upload failed (curl exit ${CURL_EXIT}) — network/DNS error"
+          echo "::warning::OPS-697: runner DNS context may not resolve ${DD_URL}"
+          echo "::warning::SBOM artifact available in workflow artifacts for manual upload"
+        else
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "DefectDojo SBOM upload status: HTTP ${HTTP_CODE}"
+          if [ "${HTTP_CODE:-0}" -ge 400 ]; then
+            echo "::warning::DefectDojo SBOM upload failed (HTTP ${HTTP_CODE})"
+            echo "::warning::Response: ${BODY}"
+          else
+            echo "SBOM uploaded to DefectDojo successfully"
+          fi
+        fi
+
+    # ---------------------------------------------------------------
+    # STEP 2: Upload OSV findings to DefectDojo
+    #
+    # Non-fatal: same curl-exit-capture pattern as STEP 1.
+    # Skips gracefully if osv-file is absent or contains no results.
+    # ---------------------------------------------------------------
+    - name: Upload OSV findings to DefectDojo
+      shell: bash
+      env:
+        DD_URL: ${{ inputs.defectdojo-url }}
+        DD_TOKEN: ${{ inputs.defectdojo-token }}
+        DD_ENGAGEMENT_ID: ${{ inputs.defectdojo-engagement-id }}
+        DD_PRODUCT_NAME: ${{ inputs.defectdojo-product-name }}
+        IMAGE_REF: ${{ inputs.image-ref }}
+        OSV_FILE: ${{ inputs.osv-file }}
+      run: |
+        echo "=== OPS-701 report: Upload OSV findings to DefectDojo ==="
+
+        # [OPS-863] Strip digest for SHA-stable test_title (same fix as SBOM step above).
+        IMAGE_STABLE="${IMAGE_REF%%@sha256:*}"
+
+        if [ ! -f "${OSV_FILE}" ]; then
+          echo "::warning::OSV file not found at ${OSV_FILE} — skipping OSV upload"
+          exit 0
+        fi
+
+        HAS_RESULTS=$(python3 -c "
+        import json
+        try:
+            d = json.load(open('${OSV_FILE}'))
+            print('true' if d.get('results') else 'false')
+        except Exception:
+            print('false')
+        " 2>/dev/null || echo "false")
+
+        if [ "${HAS_RESULTS}" = "false" ]; then
+          echo "No OSV findings to upload — skipping"
+          exit 0
+        fi
+
+        if [ -n "${DD_ENGAGEMENT_ID}" ]; then
+          ENGAGEMENT_FIELDS="-F engagement=${DD_ENGAGEMENT_ID}"
+        else
+          ENGAGEMENT_FIELDS="-F product_name=${DD_PRODUCT_NAME} -F engagement_name=sentinel-platform-osv -F auto_create_context=true"
+        fi
+
+        CURL_EXIT=0
+        RESPONSE=$(curl -sk -X POST "${DD_URL}/api/v2/reimport-scan/" \
+          -H "Authorization: Token ${DD_TOKEN}" \
+          -F "scan_type=OSV Scan" \
+          ${ENGAGEMENT_FIELDS} \
+          -F "test_title=OSV: ${IMAGE_STABLE}" \
+          -F "file=@${OSV_FILE}" \
+          -F "active=true" \
+          -F "verified=false" \
+          -F "close_old_findings=true" \
+          -F "minimum_severity=Low" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "tags=osv,supply-chain,malicious-package,ops-701" \
+          -w "\n%{http_code}" 2>/dev/null) || CURL_EXIT=$?
+
+        if [ "${CURL_EXIT}" -ne 0 ]; then
+          echo "::warning::DefectDojo OSV upload failed (curl exit ${CURL_EXIT}) — network/DNS error (OPS-697)"
+        else
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          echo "DefectDojo OSV upload status: HTTP ${HTTP_CODE}"
+          if [ "${HTTP_CODE:-0}" -ge 400 ]; then
+            echo "::warning::DefectDojo OSV upload failed (HTTP ${HTTP_CODE})"
+          else
+            echo "OSV findings uploaded to DefectDojo successfully"
+          fi
+        fi

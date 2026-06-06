@@ -1,0 +1,53 @@
+---
+# OPS-391 — Loki log aggregation pillar
+# simple-scalable mode: 1 read + 2 write + 1 backend replica
+# Storage: MinIO at 192.168.12.58, bucket loki-chunks
+# Credentials: Vault secret/data/loki/minio-creds → ESO ExternalSecret → K8s Secret
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: loki
+      targetRevision: 6.30.1
+      helm:
+        releaseName: loki
+        valueFiles:
+          - $values/clusters/overwatch/apps/loki/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/loki
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef
+        - .spec.target
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+    # Loki chart generates token Secrets from random values — ignore .data drift
+    - kind: Secret
+      name: loki
+      jqPathExpressions:
+        - .data
+    - kind: Secret
+      name: loki-canary
+      jqPathExpressions:
+        - .data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

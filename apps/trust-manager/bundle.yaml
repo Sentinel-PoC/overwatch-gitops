@@ -1,0 +1,95 @@
+---
+# OPS-518 — trust-manager Bundle
+# Distributes the Vault CA chain (root + intermediate) to all namespaces
+# as a ConfigMap key "ca-certificates.crt" that workloads can mount.
+#
+# namespaceSelector: matchLabels: {} = all namespaces (trust-manager default).
+# target.configMap: vault-ca-bundle — the ConfigMap created in each namespace.
+# key: ca-certificates.crt — conventional name, directly mountable.
+#
+# The CA data below is sourced from Vault PKI at PR creation time:
+#   pki/cert/ca (root CA)
+#   pki_int/cert/ca (intermediate CA)
+# If the Vault PKI root is rotated, this Bundle must be updated.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: vault-ca-bundle
+  namespace: cert-manager
+spec:
+  sources:
+    - inLine: |
+        -----BEGIN CERTIFICATE-----
+        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
+        ye8d
+        -----END CERTIFICATE-----
+        -----BEGIN CERTIFICATE-----
+        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
+        IopVa0p9lrsYY/jy3LFc33oWyQ==
+        -----END CERTIFICATE-----
+  target:
+    configMap:
+      key: "ca-certificates.crt"
+    namespaceSelector:
+      matchLabels: {}

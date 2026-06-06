@@ -1,0 +1,64 @@
+---
+# Default deny-all for defectdojo namespace
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: defectdojo
+spec: {}
+---
+# Allow ingress from Istio IngressGateway to DefectDojo django
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: defectdojo
+spec:
+  selector:
+    matchLabels:
+      defectdojo.org/component: django
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway
+---
+# Allow defectdojo components (django, celery) to reach Valkey
+# Valkey has a sidecar so AuthorizationPolicy is enforced on it
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-defectdojo-to-valkey
+  namespace: defectdojo
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/defectdojo/sa/defectdojo
+      to:
+        - operation:
+            ports:
+              - "6379"
+---
+# Allow celery workers/beat to reach django for API calls
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-celery-to-django
+  namespace: defectdojo
+spec:
+  selector:
+    matchLabels:
+      defectdojo.org/component: django
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/defectdojo/sa/defectdojo

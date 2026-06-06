@@ -1,0 +1,33 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 99-master-storage-vlan30-nic
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        # master-1 (BC:24:11:30:00:31) -> 192.168.30.31/24 MTU 9000
+        # NM keyfile matched by MAC so only activates on the correct node.
+        # never-default=true: storage NIC must NOT become the default route.
+        # No gateway, no DNS: storage-only L2 segment.
+        - path: /etc/NetworkManager/system-connections/storage-vlan30-bc2411300031.nmconnection
+          mode: 0600
+          overwrite: true
+          contents:
+            source: "data:text/plain;charset=utf-8;base64,W2Nvbm5lY3Rpb25dCmlkPXN0b3JhZ2UtdmxhbjMwCnR5cGU9ZXRoZXJuZXQKYXV0b2Nvbm5lY3Q9dHJ1ZQphdXRvY29ubmVjdC1wcmlvcml0eT0wCgpbZXRoZXJuZXRdCm1hYy1hZGRyZXNzPUJDOjI0OjExOjMwOjAwOjMxCm10dT05MDAwCgpbaXB2NF0KbWV0aG9kPW1hbnVhbAphZGRyZXNzZXM9MTkyLjE2OC4zMC4zMS8yNApuZXZlci1kZWZhdWx0PXRydWUKCltpcHY2XQptZXRob2Q9ZGlzYWJsZWQK"
+        # master-2 (BC:24:11:30:00:32) -> 192.168.30.32/24 MTU 9000
+        - path: /etc/NetworkManager/system-connections/storage-vlan30-bc2411300032.nmconnection
+          mode: 0600
+          overwrite: true
+          contents:
+            source: "data:text/plain;charset=utf-8;base64,W2Nvbm5lY3Rpb25dCmlkPXN0b3JhZ2UtdmxhbjMwCnR5cGU9ZXRoZXJuZXQKYXV0b2Nvbm5lY3Q9dHJ1ZQphdXRvY29ubmVjdC1wcmlvcml0eT0wCgpbZXRoZXJuZXRdCm1hYy1hZGRyZXNzPUJDOjI0OjExOjMwOjAwOjMyCm10dT05MDAwCgpbaXB2NF0KbWV0aG9kPW1hbnVhbAphZGRyZXNzZXM9MTkyLjE2OC4zMC4zMi8yNApuZXZlci1kZWZhdWx0PXRydWUKCltpcHY2XQptZXRob2Q9ZGlzYWJsZWQK"
+        # master-3 (BC:24:11:30:00:33) -> 192.168.30.33/24 MTU 9000
+        - path: /etc/NetworkManager/system-connections/storage-vlan30-bc2411300033.nmconnection
+          mode: 0600
+          overwrite: true
+          contents:
+            source: "data:text/plain;charset=utf-8;base64,W2Nvbm5lY3Rpb25dCmlkPXN0b3JhZ2UtdmxhbjMwCnR5cGU9ZXRoZXJuZXQKYXV0b2Nvbm5lY3Q9dHJ1ZQphdXRvY29ubmVjdC1wcmlvcml0eT0wCgpbZXRoZXJuZXRdCm1hYy1hZGRyZXNzPUJDOjI0OjExOjMwOjAwOjMzCm10dT05MDAwCgpbaXB2NF0KbWV0aG9kPW1hbnVhbAphZGRyZXNzZXM9MTkyLjE2OC4zMC4zMy8yNApuZXZlci1kZWZhdWx0PXRydWUKCltpcHY2XQptZXRob2Q9ZGlzYWJsZWQK"

@@ -1,0 +1,37 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: grafana-api
+  description: Grafana HTTP API for dashboard and datasource management
+  links:
+    - url: https://grafana.208.haist.farm
+      title: Grafana Dashboard
+      icon: dashboard
+  tags:
+    - monitoring
+    - observability
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: Grafana HTTP API
+      version: "11.x"
+      description: Grafana API with 11 dashboards and 2 datasources
+    servers:
+      - url: https://grafana.208.haist.farm/api
+    paths:
+      /dashboards/uid/{uid}:
+        get:
+          summary: Get dashboard by UID
+      /datasources:
+        get:
+          summary: List all datasources
+      /search:
+        get:
+          summary: Search dashboards

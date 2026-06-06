@@ -1,0 +1,25 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: backstage
+  description: Backstage developer portal for the Sentinel platform — service catalog, TechDocs, and scaffolding
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=backstage
+    backstage.io/kubernetes-namespace: backstage
+    argocd/app-name: backstage
+  links:
+    - url: https://backstage.208.haist.farm
+      title: Backstage Developer Portal
+      icon: dashboard
+  tags:
+    - developer-portal
+    - catalog
+    - platform
+    - application
+    - overwatch
+spec:
+  type: website
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

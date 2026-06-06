@@ -1,0 +1,224 @@
+---
+# OPS-692: Build, push, and sign the netbox-with-acls container image.
+# Triggered on push to main when netbox build assets or signing composites change.
+#
+# OPS-988: Added .forgejo/actions/sign/** and .forgejo/actions/attest/** to trigger
+# paths so that changes to the sign/attest composites automatically retrigger a
+# rebuild+resign. Without this, sign composite updates (e.g. OPS-904) would not
+# retroactively re-sign existing images — manual workflow_dispatch was required.
+#
+# Pattern mirrors build-sentinel-ops.yml:
+#   login → buildah bud → buildah push
+#   → scan (SBOM + OSV + language audit — non-fatal)
+#   → sign (cosign sign, OCI 1.1 Referrers API — must-succeed)
+#   → attest (SLSA v1.0 + SBOM attestation, legacy .att tag — must-succeed)
+#   → report (DefectDojo upload — non-fatal, skip if unreachable)
+#   → cosign verify (OPS-1121: cryptographic verify via Referrers API) → Trivy scan (non-blocking)
+#
+# OPS-701: migrated from monolithic security-scan composite to 4 focused composites.
+# See .forgejo/actions/README.md for interface contracts and design rationale.
+#
+# Key difference from sentinel-ops build: the base image (netbox:v4.5.3) is
+# Harbor-hosted, not Docker Hub. An explicit Harbor login step is added before
+# the build to ensure buildah can pull the base image during bud.
+#
+# cosign key: loaded from /etc/cosign/cosign.key on the iac runner
+#   (same key provisioned by iac-control Ansible role from Vault secret/cosign).
+#
+# Image tag convention: v{NETBOX_VERSION}-acls{PLUGIN_VERSION}
+#   This encodes both the NetBox base version and the plugin version,
+#   making the image lineage traceable without reading the Dockerfile.
+#
+# MERGE ORDER CONSTRAINT: This workflow MUST be merged AFTER the 4 composite
+# PRs (scan/sign/attest/report) land on main. The uses: local-path references
+# below assume .forgejo/actions/{scan,sign,attest,report}/ exist in the repo.
+# (OPS-701 PR 6 of 8 — merges after PRs 2, 3, 4, 5.)
+
+name: Build netbox-with-acls image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/netbox/build/**
+      - .forgejo/actions/sign/**
+      - .forgejo/actions/attest/**
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual trigger"
+        required: false
+        default: "manual re-trigger"
+
+env:
+  HARBOR_REGISTRY: harbor.208.haist.farm
+  IMAGE_NAME: sentinel/netbox-with-acls
+  # Tag encodes NetBox base version + plugin version.
+  # Bump when either the base NetBox image or netbox-acls version changes.
+  IMAGE_TAG: v4.6.1-acls2.0.1
+
+jobs:
+  build-and-push:
+    runs-on: iac-buildah  # [OPS-1104] Pin to buildah-capable runner; avoids pve4-2 dispatch race
+    steps:
+      - uses: actions/checkout@v4
+
+      # Login and build in one step: Harbor credentials must be available when
+      # buildah bud pulls the Harbor-hosted base image (FROM harbor.208.../netbox:v4.5.3).
+      # Co-locating login+bud matches the sentinel-ops precedent (login+push co-located)
+      # and avoids reliance on buildah credential persistence across steps.
+      - name: Build container image
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "Logging in to Harbor registry: $HARBOR_REGISTRY"
+          buildah login \
+            --username "$HARBOR_USERNAME" \
+            --password "$HARBOR_PASSWORD" \
+            "$HARBOR_REGISTRY"
+
+          echo "Building $HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          buildah bud \
+            --file apps/netbox/build/Dockerfile \
+            -t "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" \
+            apps/netbox/build/
+
+      # Push by digest — re-login per sentinel-ops precedent (login+push co-located).
+      - name: Push to Harbor
+        id: push
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          buildah login \
+            --username "$HARBOR_USERNAME" \
+            --password "$HARBOR_PASSWORD" \
+            "$HARBOR_REGISTRY"
+          buildah push --digestfile /tmp/digest.txt "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          DIGEST="$(cat /tmp/digest.txt)"
+          echo "Pushed: $HARBOR_REGISTRY/$IMAGE_NAME@$DIGEST (tagged :$IMAGE_TAG)"
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      # ---------------------------------------------------------------
+      # Supply-chain security: 4 focused composites (OPS-701)
+      # Replaces: uses: ./.forgejo/actions/security-scan (monolithic)
+      #
+      # Order matters:
+      #   scan first (produces sbom.cyclonedx.json + osv.json)
+      #   sign before attest (establishes image integrity first)
+      #   attest consumes SBOM from scan composite (sbom.cyclonedx.json)
+      #   report last (non-fatal; runs even if scan had warnings)
+      # ---------------------------------------------------------------
+
+      # scan: SBOM + OSV + language audit — non-fatal
+      # Produces sbom.cyclonedx.json and osv.json for downstream composites.
+      - name: Scan (SBOM + OSV + language audit)
+        uses: ./.forgejo/actions/scan
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          language: none
+          source-dir: apps/netbox/build
+          hard-fail-on-critical: "false"
+
+      # sign: cosign sign (OCI 1.1 Referrers API, COSIGN_EXPERIMENTAL=1) — must-succeed
+      - name: Sign image
+        uses: ./.forgejo/actions/sign
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          cosign-key: ${{ secrets.COSIGN_KEY }}
+          cosign-password: ${{ secrets.COSIGN_PASSWORD || '' }}
+
+      # attest: SLSA v1.0 provenance + SBOM attestation — must-succeed
+      # Uses SBOM from scan step. Attestations stored as legacy sha256-XXX.att tags
+      # (cosign attest lacks --registry-referrers-mode; operator accepted legacy mode).
+      - name: Attest (SLSA v1.0 + SBOM, legacy .att tag)
+        uses: ./.forgejo/actions/attest
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          cosign-key: ${{ secrets.COSIGN_KEY }}
+          cosign-password: ${{ secrets.COSIGN_PASSWORD || '' }}
+          sbom-file: sbom.cyclonedx.json
+
+      # report: DefectDojo upload — non-fatal (OPS-697: DNS context defect)
+      # Failure here does NOT block sign or attest (separation by composite boundary).
+      # Skip this step in workflow_dispatch if DefectDojo is known-unreachable.
+      - name: Report to DefectDojo (non-fatal)
+        uses: ./.forgejo/actions/report
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          defectdojo-token: ${{ secrets.DEFECTDOJO_API_KEY }}
+          defectdojo-product-name: "NetBox with ACLs Image"
+
+      # ---------------------------------------------------------------
+      # OPS-1121: Referrers-aware cryptographic cosign verify (replaces legacy .sig tag probe).
+      #
+      # The sign composite (OCI 1.1 Referrers API, COSIGN_EXPERIMENTAL=1) stores
+      # signatures as Referrers API accessories — NOT as sha256-<hex>.sig tags.
+      # The previous OPS-988 step probed for a .sig tag that never exists in
+      # Referrers mode, producing a false-fail (HTTP 404) on every build.
+      #
+      # Fix: use cosign verify directly against the image digest. cosign queries
+      # the OCI Referrers API to find the signature accessory and cryptographically
+      # verifies it against the platform public key.
+      #
+      # --insecure-ignore-tlog is REQUIRED: the platform signs with --tlog-upload=false
+      # (no Rekor transparency log). Without this flag cosign verify fails looking for
+      # a tlog entry that was never written. This is the correct posture for a
+      # private registry with a local key (no public Sigstore infrastructure).
+      #
+      # The public key (/etc/cosign/cosign.pub) is Ansible-provisioned on iac runners
+      # from Vault secret/cosign. This is a real cryptographic verify — strictly
+      # stronger than the former presence check.
+      # ---------------------------------------------------------------
+      - name: Verify cosign signature (OCI 1.1 Referrers cryptographic verify)
+        run: |
+          set -euo pipefail
+          DIGEST="${{ steps.push.outputs.digest }}"
+          echo "=== OPS-1121 verify: cosign cryptographic signature verification ==="
+          echo "Image: $HARBOR_REGISTRY/$IMAGE_NAME@${DIGEST}"
+          echo "Key: /etc/cosign/cosign.pub"
+          cosign verify \
+            --key /etc/cosign/cosign.pub \
+            --insecure-ignore-tlog \
+            "$HARBOR_REGISTRY/$IMAGE_NAME@${DIGEST}"
+          echo "PASS: cosign signature cryptographically verified (OCI 1.1 Referrers API)"
+
+      - name: Trivy scan (non-blocking)
+        run: |
+          trivy image --severity HIGH,CRITICAL --format table \
+            "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" || true
+
+      # Upload scan artifacts for audit trail (was step 8 in old composite).
+      # Collects sbom.cyclonedx.json, osv.json, slsaprovenance.json from workspace.
+      - name: Upload security scan artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-scan-artifacts-${{ github.run_id }}
+          path: |
+            sbom.cyclonedx.json
+            osv.json
+            slsaprovenance.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Print image reference for sentinel-images.txt update
+        run: |
+          echo "====="
+          echo "Update ci/sentinel-images.txt in sentinel-iac with:"
+          echo "harbor.208.haist.farm/$IMAGE_NAME@${{ steps.push.outputs.digest }}  none"
+          echo "====="
+          echo "Kyverno verify-image-signatures will accept this image once the"
+          echo "cosign signature is present and verified (signed above with platform key, OCI 1.1 Referrers)."
+
+  gitleaks:
+    runs-on: iac
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks secret detection
+        run: |
+          gitleaks detect --source . --report-format json --report-path gitleaks-report.json --no-git
+          echo "No secrets detected."

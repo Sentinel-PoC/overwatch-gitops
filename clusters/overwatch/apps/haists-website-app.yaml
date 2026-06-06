@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: haists-website
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/haists-website
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: haists-website
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef
+        - .spec.target
+    # OPS-917 (2026-05-25): OKD 4.15+ admission adds `userNamespaceLevel: AllowHostLevel`
+    # as a server-default to existing SCCs on cluster upgrade. This field is not in the
+    # git source and is not owned by any named field manager — it's server-populated.
+    # All other security-relevant fields (users, groups, priority, capabilities) remain
+    # tracked by ArgoCD. Scope is minimum-effective: single jsonPointer only.
+    # Related: SEC-33 removed a broader SCC ignore 2026-04-24; see that issue for context.
+    - group: security.openshift.io
+      kind: SecurityContextConstraints
+      name: haists-website-anyuid
+      jsonPointers:
+        - /userNamespaceLevel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+    - RespectIgnoreDifferences=true

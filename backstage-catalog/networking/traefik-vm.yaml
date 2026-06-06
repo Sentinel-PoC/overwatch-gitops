@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: traefik-proxy
+  description: Traefik reverse proxy and Cloudflare tunnel endpoint on pangolin-proxy VM
+  annotations:
+    grafana/dashboard-url: https://grafana.208.haist.farm
+  links:
+    - url: https://traefik.208.haist.farm
+      title: Traefik Dashboard
+      icon: dashboard
+  tags:
+    - networking
+    - reverse-proxy
+    - traefik
+    - vm-service
+    - overwatch
+spec:
+  type: vm
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

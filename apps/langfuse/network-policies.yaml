@@ -1,0 +1,144 @@
+# OPS-517: NetworkPolicy default-deny baseline for langfuse namespace.
+#
+# Pods in scope (verified 2026-05-18):
+#   - langfuse-web (Helm chart: langfuse-langfuse-web) — OCP Route port 3000
+#   - langfuse-worker (Helm chart: langfuse-langfuse-worker)
+#   - langfuse-postgresql (custom deployment — CreateContainerError, non-networking issue)
+#   - langfuse-redis (custom deployment)
+#   - langfuse-clickhouse (custom deployment — port 8123 HTTP, 9000 native, 9440 HTTPS)
+#   - langfuse-s3 (custom MinIO-compatible S3 — port 9000)
+#   - langfuse-ch-backup (CronJob in LANGFUSE namespace — needs egress to MinIO .58:9000)
+#
+# Ingress sources:
+#   - OCP HAProxy Router (openshift-ingress ns) → langfuse-web:3000 (via Route)
+#   - Same-namespace pods (service mesh)
+#
+# Egress destinations:
+#   - Same-namespace pods (PostgreSQL, Redis, ClickHouse, S3 services)
+#   - MinIO .58:9000 (ch-backup target — S3Directory format, see langfuse-ch-backup-cronjob.yaml)
+#   - DNS (any namespace, ports 53/5353)
+#
+# NOTE (langfuse-backup cross-namespace):
+#   The langfuse-backup namespace (PostgreSQL backup CronJob) does not exist in the cluster
+#   as of 2026-05-18. When it is created, the following ingress rule must be added to this
+#   file to allow langfuse-backup pods to reach langfuse-postgresql:5432:
+#
+#   ingress:
+#   - from:
+#     - namespaceSelector:
+#         matchLabels:
+#           kubernetes.io/metadata.name: langfuse-backup
+#     ports:
+#     - port: 5432
+#       protocol: TCP
+#
+#   The langfuse-backup NetworkPolicy already has egress configured to langfuse namespace.
+#   File OPS-NNN tracking this follow-up when langfuse-backup namespace is created.
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: langfuse
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: langfuse
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow all intra-namespace pod communication (bidirectional)
+# Covers: web↔postgresql, web↔redis, web↔clickhouse, web↔s3, worker↔all,
+#         ch-backup↔clickhouse, init containers reaching postgresql/redis.
+# Using broad podSelector:{} because Helm chart labels are not fixed across releases.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: langfuse
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# Allow ingress from OCP HAProxy Router (openshift-ingress namespace)
+# OCP Route at langfuse.208.haist.farm routes to langfuse-web service port 3000.
+# Selector uses OKD standard router namespace label (confirmed live 2026-05-18).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-router
+  namespace: langfuse
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 3000
+          protocol: TCP
+---
+# Allow egress to MinIO backup destination (192.168.12.58:9000)
+# Used by langfuse-ch-backup CronJob (in langfuse namespace) for ClickHouse backups
+# stored in S3Directory format. See langfuse-ch-backup-cronjob.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-egress
+  namespace: langfuse
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP

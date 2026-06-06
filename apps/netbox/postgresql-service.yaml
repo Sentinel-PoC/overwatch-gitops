@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: netbox-postgresql
+  namespace: netbox
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: netbox
+spec:
+  selector:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: netbox
+  ports:
+    - port: 5432
+      targetPort: 5432

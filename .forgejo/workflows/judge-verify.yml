@@ -1,0 +1,233 @@
+---
+name: Judge Verification
+on:
+  push:
+    branches: [main]
+
+jobs:
+  judge-verify:
+    runs-on: iac-buildah
+    steps:
+      - name: Wait for ArgoCD sync
+        run: |
+          echo "Waiting 60s for ArgoCD to detect and sync changes..."
+          sleep 60
+
+      - name: Fetch compliance JSON
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          JSON_PATH="/tmp/nist-compliance-latest.json"
+
+          # Try local paths first (runner may have the file)
+          for candidate in \
+            "${HOME}/sentinel-cache/config-cache/nist-compliance-latest.json" \
+            "${HOME}/repos/sentinel-cache/config-cache/nist-compliance-latest.json" \
+            "/var/log/sentinel/nist-compliance-$(date +%Y-%m-%d).json"; do
+            if [ -f "$candidate" ]; then
+              echo "Found local compliance JSON at $candidate"
+              cp "$candidate" "$JSON_PATH"
+              break
+            fi
+          done
+
+          # If no local file, fetch from sentinel-cache repo via Forgejo API
+          if [ ! -f "$JSON_PATH" ]; then
+            echo "No local JSON found — fetching from sentinel-cache repo..."
+            TOKEN="${FORGEJO_TOKEN:-${GITHUB_TOKEN:-}}"
+            FORGEJO_URL="${GITHUB_SERVER_URL:-http://192.168.12.70:3000}"
+            if [ -n "$TOKEN" ]; then
+              curl -sf \
+                -H "Authorization: token ${TOKEN}" \
+                "${FORGEJO_URL}/api/v1/repos/sentinel-admin/sentinel-cache/raw/config-cache/nist-compliance-latest.json" \
+                -o "$JSON_PATH" || true
+            fi
+          fi
+
+          if [ ! -f "$JSON_PATH" ] || [ ! -s "$JSON_PATH" ]; then
+            echo "::error::No compliance JSON found (checked local paths and Forgejo API)"
+            exit 1
+          fi
+
+          # Validate JSON
+          python3 -c "import json; json.load(open('$JSON_PATH'))" || {
+            echo "::error::Compliance JSON is not valid JSON"
+            exit 1
+          }
+
+          # Check freshness using the timestamp field in the JSON
+          CHECK_TS=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(d.get('timestamp', ''))
+          ")
+          if [ -n "$CHECK_TS" ]; then
+            JSON_EPOCH=$(date -d "$CHECK_TS" +%s 2>/dev/null || echo 0)
+            NOW_EPOCH=$(date +%s)
+            if [ "$JSON_EPOCH" -gt 0 ]; then
+              JSON_AGE=$(( NOW_EPOCH - JSON_EPOCH ))
+              if [ "$JSON_AGE" -gt 21600 ]; then
+                echo "::warning::Compliance JSON is $(( JSON_AGE / 3600 )) hours old (from $CHECK_TS)"
+              fi
+            fi
+          fi
+
+          echo "JSON_PATH=$JSON_PATH" >> "$GITHUB_ENV"
+
+      - name: Parse compliance results
+        run: |
+          JSON_PATH="${JSON_PATH:-/tmp/nist-compliance-latest.json}"
+
+          PASS_COUNT=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(sum(1 for c in d['checks'] if c['status'] == 'PASS'))
+          ")
+          FAIL_COUNT=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(sum(1 for c in d['checks'] if c['status'] == 'FAIL'))
+          ")
+          WARN_COUNT=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(sum(1 for c in d['checks'] if c['status'] == 'WARN'))
+          ")
+          TOTAL=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(len(d['checks']))
+          ")
+          CHECK_TS=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(d.get('timestamp', 'UNKNOWN'))
+          ")
+          OVERALL=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          print(d.get('overall_status', 'UNKNOWN'))
+          ")
+
+          # Get failure details
+          FAIL_DETAIL=$(python3 -c "
+          import json
+          with open('$JSON_PATH') as f:
+              d = json.load(f)
+          for c in d['checks']:
+              if c['status'] in ('FAIL', 'WARN'):
+                  ctrl = c.get('control', c.get('control_id', '?'))
+                  chk = c.get('check', c.get('check_id', '?'))
+                  detail = c.get('detail', '')[:120]
+                  print(f\"{c['status']}: {ctrl} — {chk} — {detail}\")
+          ")
+
+          echo "=== JUDGE VERIFICATION ==="
+          echo "Check timestamp: $CHECK_TS"
+          echo "Pass: $PASS_COUNT / $TOTAL"
+          echo "Fail: $FAIL_COUNT"
+          echo "Warn: $WARN_COUNT"
+          echo "Overall: $OVERALL"
+          if [ -n "$FAIL_DETAIL" ]; then
+            echo ""
+            echo "Issues:"
+            echo "$FAIL_DETAIL"
+          fi
+
+          # Export for Plane comment step
+          echo "PASS_COUNT=$PASS_COUNT" >> "$GITHUB_ENV"
+          echo "FAIL_COUNT=$FAIL_COUNT" >> "$GITHUB_ENV"
+          echo "WARN_COUNT=$WARN_COUNT" >> "$GITHUB_ENV"
+          echo "TOTAL=$TOTAL" >> "$GITHUB_ENV"
+          echo "CHECK_TS=$CHECK_TS" >> "$GITHUB_ENV"
+          echo "OVERALL=$OVERALL" >> "$GITHUB_ENV"
+          # Multiline export for fail details
+          {
+            echo "FAIL_DETAIL<<JUDGE_EOF"
+            echo "$FAIL_DETAIL"
+            echo "JUDGE_EOF"
+          } >> "$GITHUB_ENV"
+
+          # Verdict
+          if [ "$FAIL_COUNT" -eq 0 ]; then
+            echo "VERDICT=PASS — no compliance failures" >> "$GITHUB_ENV"
+          else
+            echo "VERDICT=FAIL — $FAIL_COUNT checks failing" >> "$GITHUB_ENV"
+          fi
+
+      - name: Post result to Plane
+        env:
+          PLANE_API_KEY: ${{ secrets.PLANE_API_KEY }}
+          OPS_PROJECT_ID: "223c0b66-4255-406e-932f-3b50c0e93543"
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          COMMIT_SHA="${GITHUB_SHA:0:8}"
+
+          # Build HTML comment body
+          COMMENT_HTML="<p><strong>JUDGE VERIFICATION (automated)</strong></p>"
+          COMMENT_HTML+="<p><strong>Timestamp:</strong> ${TIMESTAMP}</p>"
+          COMMENT_HTML+="<p><strong>Trigger:</strong> push to main (${COMMIT_SHA})</p>"
+          COMMENT_HTML+="<p><strong>Compliance check ran:</strong> ${CHECK_TS}</p>"
+          COMMENT_HTML+="<p><strong>Pass:</strong> ${PASS_COUNT} / ${TOTAL}<br/>"
+          COMMENT_HTML+="<strong>Fail:</strong> ${FAIL_COUNT}<br/>"
+          COMMENT_HTML+="<strong>Warn:</strong> ${WARN_COUNT}<br/>"
+          COMMENT_HTML+="<strong>Overall:</strong> ${OVERALL}</p>"
+
+          if [ -n "$FAIL_DETAIL" ]; then
+            COMMENT_HTML+="<pre>${FAIL_DETAIL}</pre>"
+          fi
+
+          COMMENT_HTML+="<p><strong>Verdict:</strong> ${VERDICT}</p>"
+
+          # Find the most recent In Progress issue in OPS project to comment on
+          # If PLANE_API_KEY is not set, skip posting
+          if [ -z "$PLANE_API_KEY" ]; then
+            echo "::warning::PLANE_API_KEY not set — skipping Plane comment"
+            echo "Would have posted:"
+            echo "$COMMENT_HTML"
+            exit 0
+          fi
+
+          # Post as a comment on a standing judge-results issue
+          # For now, log the result — the Plane comment posting requires
+          # knowing which specific issue to post to, which depends on
+          # the PR that was merged. This will be enhanced when Forgejo
+          # provides merged PR context in push events.
+          echo "=== Judge result for Plane ==="
+          echo "$COMMENT_HTML" | sed 's/<[^>]*>//g'
+
+          # Store result for downstream consumption
+          mkdir -p /tmp/judge-results
+          cat > "/tmp/judge-results/latest.json" << EOF
+          {
+            "timestamp": "${TIMESTAMP}",
+            "commit": "${COMMIT_SHA}",
+            "check_timestamp": "${CHECK_TS}",
+            "pass": ${PASS_COUNT},
+            "fail": ${FAIL_COUNT},
+            "warn": ${WARN_COUNT},
+            "total": ${TOTAL},
+            "overall": "${OVERALL}",
+            "verdict": "${VERDICT}"
+          }
+          EOF
+
+          echo "Result saved to /tmp/judge-results/latest.json"
+
+      - name: Fail on compliance regression
+        run: |
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "::error::Compliance regression detected: $FAIL_COUNT checks failing"
+            # Non-blocking for now — report only, don't fail the workflow
+            # Uncomment the next line to make failures block:
+            # exit 1
+          fi
+          echo "Judge verification complete: $VERDICT"

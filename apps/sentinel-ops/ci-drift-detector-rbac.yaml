@@ -1,0 +1,69 @@
+---
+# OPS-1103: Read-only drift detector ServiceAccount for image-sha-drift workflow.
+# SA placed in sentinel-ops namespace (same pattern as etcd-backup-sa, OPS-883).
+#
+# Credentials stored out-of-band in Vault at secret/iac/ci-drift-detector (field: kubeconfig).
+# Long-lived SA token bound via Secret ci-drift-detector-token in sentinel-ops.
+# Workflow uses VAULT_DRIFT_TOKEN (policy: ci-drift-detector-read) — NOT root token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-drift-detector
+  namespace: sentinel-ops
+  annotations:
+    ops-issue: "OPS-1103"
+    description: >
+      Read-only SA for image-sha-drift Actions workflow (OPS-1103).
+      Gets/lists/watches pods cluster-wide only — no write access anywhere.
+      Token stored in Vault secret/iac/ci-drift-detector via long-lived SA Secret.
+---
+# ClusterRole: pods get/list/watch ONLY. No other resources, no write verbs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ci-drift-detector-read
+  annotations:
+    ops-issue: "OPS-1103"
+    description: >
+      Grants cluster-wide read-only access to pods for image SHA drift detection.
+      Intentionally narrow: pods only, get/list/watch only.
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding: ties ci-drift-detector SA to the narrow ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ci-drift-detector-read
+  annotations:
+    ops-issue: "OPS-1103"
+    description: >
+      Binds ci-drift-detector (sentinel-ops) to ci-drift-detector-read ClusterRole.
+      Cluster-wide pod read for drift detection — no namespace restriction needed
+      since pod listing is inherently cross-namespace.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ci-drift-detector-read
+subjects:
+- kind: ServiceAccount
+  name: ci-drift-detector
+  namespace: sentinel-ops
+---
+# Long-lived SA token Secret. kubernetes.io/service-account-token type:
+# token is populated by the controller and never expires. Used for unattended CI.
+# The resulting kubeconfig is stored in Vault at secret/iac/ci-drift-detector.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ci-drift-detector-token
+  namespace: sentinel-ops
+  annotations:
+    kubernetes.io/service-account.name: ci-drift-detector
+    ops-issue: "OPS-1103"
+    description: >
+      Long-lived token Secret for ci-drift-detector SA.
+      Vault kubeconfig at secret/iac/ci-drift-detector is built from this token.
+type: kubernetes.io/service-account-token

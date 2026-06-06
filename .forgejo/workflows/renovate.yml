@@ -1,0 +1,98 @@
+---
+# OPS-855: Deploy Renovate as a scheduled Forgejo Actions workflow.
+#
+# Runs ghcr.io/renovatebot/renovate:43 on the iac-control runner.
+# Renovate scans sentinel-admin/* repos and opens PRs for dependency updates.
+#
+# Architecture: This workflow mounts renovate.json5 (repo root) into the
+# Renovate container as the global config file. The config file contains
+# both global settings (platform, endpoint, autodiscover) and per-repo
+# policy (packageRules, customManagers). When Renovate processes each
+# autodiscovered repo, it applies the global config plus any repo-level
+# renovate.json5 in that repo.
+#
+# Initial strategy (Phase 2):
+#   - security:only-security-updates preset — targets CVE backlog (OPS-489)
+#     before enabling full dependency bumps (Phase 3).
+#   - Auto-merge DISABLED — security PRs require human review initially.
+#   - Dependency Dashboard issue created in overwatch-gitops by Renovate.
+#
+# Secrets (Forgejo Actions org-level, set by operator before first run):
+#   RENOVATE_TOKEN     — renovate-bot PAT (Vault: secret/forgejo-renovate/bot_token .token)
+#   GITHUB_COM_TOKEN   — read-only GitHub PAT to avoid rate-limits when
+#                        resolving upstream changelogs and release notes
+#                        (Vault: secret/forgejo-renovate/github_com_token .token)
+#
+# Cache: /tmp/renovate-cache on the iac runner (ephemeral between workflow
+# runs; acceptable for Phase 2 — add a named Docker volume for persistence
+# in Phase 3 if cold metadata fetches push run time above 10 min).
+#
+# Schedule: every 4 hours, offset by 15 min to avoid top-of-hour contention
+# with other platform cron jobs. Manual trigger retained for ad-hoc runs
+# and debugging (supports log_level and dry_run inputs).
+#
+# Runner label: iac (maps to iac-control systemd runner; verified from
+# existing overwatch-gitops workflows: all use runs-on: iac).
+
+name: Renovate
+
+on:
+  schedule:
+    # Every 4 hours at :15 past the hour (UTC)
+    - cron: "15 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: "Renovate log level (debug|info|warn)"
+        required: false
+        default: "info"
+      dry_run:
+        description: "Dry run mode (full|extract|lookup — no PRs opened; empty = live)"
+        required: false
+        default: ""
+
+jobs:
+  renovate:
+    name: Renovate dependency scan
+    runs-on: iac
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate secrets present
+        run: |
+          if [ -z "${{ secrets.RENOVATE_TOKEN }}" ]; then
+            echo "ERROR: RENOVATE_TOKEN secret is not set at org or repo level."
+            echo "  Set it: Forgejo org Settings > Actions > Secrets > New secret"
+            echo "  Name: RENOVATE_TOKEN"
+            echo "  Value: renovate-bot PAT from Vault: secret/forgejo-renovate/bot_token .token"
+            exit 1
+          fi
+          if [ -z "${{ secrets.RENOVATE_GH_RELEASES_TOKEN }}" ]; then
+            echo "WARNING: GITHUB_COM_TOKEN not set — GitHub API rate-limits will apply."
+            echo "  Value source: Vault secret/forgejo-renovate/github_com_token .token"
+          fi
+          echo "Secret validation passed."
+
+      - name: Run Renovate
+        env:
+          # Credentials — never echo these
+          RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+          GITHUB_COM_TOKEN: ${{ secrets.RENOVATE_GH_RELEASES_TOKEN }}
+          # Log level — overrideable via workflow_dispatch
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
+          # Dry run — set via workflow_dispatch input; empty = live mode
+          RENOVATE_DRY_RUN: ${{ inputs.dry_run || '' }}
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/renovate.json5:/usr/src/app/config.json5:ro" \
+            -e RENOVATE_CONFIG_FILE=/usr/src/app/config.json5 \
+            -e RENOVATE_TOKEN \
+            -e GITHUB_COM_TOKEN \
+            -e LOG_LEVEL \
+            -e RENOVATE_DRY_RUN \
+            -e RENOVATE_CACHE_DIR=/tmp/renovate-cache \
+            -e RENOVATE_TELEMETRY_SAMPLE_RATE=0 \
+            ghcr.io/renovatebot/renovate:43

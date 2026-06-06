@@ -1,0 +1,291 @@
+---
+# DefectDojo Helm values for OKD deployment
+# Chart: defectdojo/defectdojo v1.9.12 (app v2.55.4)
+# OKD: anyuid SCC for all SAs
+
+# -- Primary hostname (controls DD_ALLOWED_HOSTS and probe Host headers)
+host: defectdojo.208.haist.farm
+
+# -- Full site URL (affects links, JIRA integration, etc.)
+siteUrl: "https://defectdojo.208.haist.farm"
+
+# -- Disable chart-managed secrets (using ESO ExternalSecrets)
+createSecret: false
+createValkeySecret: false
+createPostgresqlSecret: false
+
+# -- Disable pre-install hooks for ArgoCD compatibility
+disableHooks: true
+
+# -- Use pre-created ServiceAccount with anyuid SCC
+serviceAccount:
+  create: false
+  name: defectdojo
+
+# -- Global image pull secrets
+imagePullSecrets: harbor-pull-secret
+
+# -- Admin user configuration
+admin:
+  user: koiakoia
+  mail: koiakoia@defectdojo.208.haist.farm
+  firstName: Koia
+  lastName: Koia
+
+# -- Global image defaults (OPS-645: correct chart paths)
+# Chart v1.9.12 _helpers.tpl uses:
+#   merge .Values.<component>.image .Values.images.django.image
+#   merge .Values.<component>.image .Values.images.nginx.image
+# as fallbacks for all django-based and nginx containers respectively.
+# The previous django.image / nginx.image / celery.image paths were WRONG
+# and silently ignored by the chart templates.
+#
+# OPS-655: defectdojo-nginx:2.55.4 cosign-signed on 2026-05-22 (OCI 1.1 referrers mode).
+# verify-image-signatures (Enforce) now passes for nginx. Both images use harbor sentinel/*.
+# images.nginx.image fallback and django.nginx.image explicit override are in sync.
+images:
+  django:
+    image:
+      registry: harbor.208.haist.farm
+      repository: sentinel/defectdojo-django
+      tag: "2.55.4"
+  nginx:
+    image:
+      registry: harbor.208.haist.farm
+      repository: sentinel/defectdojo-nginx
+      tag: "2.55.4"
+
+# -- Django configuration
+# OPS-645 follow-up: explicit image overrides for the django pod's containers.
+# The merge-based fallback via images.django.image did not reliably propagate
+# to django.uwsgi in practice -- all chart-default sub-keys exist as empty strings,
+# and whether mergo's zero-value check overrides them appears environment-dependent.
+# Explicit overrides are unambiguous and don't depend on merge semantics.
+#
+# OPS-655: django.nginx.image restored to harbor. defectdojo-nginx:2.55.4 was
+# cosign-signed (OCI 1.1 referrers mode) on 2026-05-22 using the platform cosign key.
+# Harbor referrers API confirms signature at digest sha256:ebd7894... (sig manifest
+# sha256:4e84b2b...). Kyverno verify-image-signatures (Enforce) passes; verify-attestations
+# is Audit-only and does not block. docker.io workaround from OPS-645 PR #198 is removed.
+django:
+  ingress:
+    enabled: false
+  podSecurityContext:
+    fsGroup: 1001
+  uwsgi:
+    image:
+      registry: harbor.208.haist.farm
+      repository: sentinel/defectdojo-django
+      tag: "2.55.4"
+    livenessProbe:
+      enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+  nginx:
+    image:
+      registry: harbor.208.haist.farm
+      repository: sentinel/defectdojo-nginx
+      tag: "2.55.4"
+
+# -- Celery configuration
+# OPS-653: explicit image overrides for celery beat and worker containers.
+# Chart default celery.beat.image = {registry: "", repository: "", tag: "", digest: ""}.
+# merge .Values.celery.beat.image .Values.images.django.image gives the empty-string
+# chart-default values precedence when mergo does NOT treat "" as zero-value —
+# behaviour is environment-dependent (same issue as django.uwsgi, fixed in OPS-645).
+# Explicit overrides are unambiguous and do not depend on merge semantics.
+#
+# OPS-957 (Path 2b): livenessProbe + readinessProbe via Helm values.
+# The SSA-patch approach (OPS-951) was reverted because SSA Replace=true stripped
+# envFrom from the celery container spec. Helm values flow through chart templates
+# and preserve all chart-rendered fields including envFrom.
+#
+# Beat: PID-based exec probe. Beat is a scheduler (not a consumer), so
+# celery inspect ping does not target it. The entrypoint writes the beat PID
+# to /var/run/defectdojo/celery-beat.pid (confirmed: entrypoint-celery-beat.sh).
+# kill -0 checks process liveness without sending a signal.
+#
+# Worker: celery inspect ping. Workers register as consumer nodes and respond
+# to inspect broadcast. Validates both process liveness and broker connectivity.
+#
+# Both probe types required per memory feedback_livenessprobe_without_readinessprobe_false_positive_ready:
+# readinessProbe prevents false-positive Ready during restart loops.
+celery:
+  beat:
+    image:
+      registry: harbor.208.haist.farm
+      repository: sentinel/defectdojo-django
+      tag: "2.55.4"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    # Chart template: {{- with .Values.celery.beat.livenessProbe }} livenessProbe: {{ toYaml . | nindent 10 }} {{- end }}
+    # Non-empty map required — empty {} is falsy in Go templates and suppresses the block.
+    livenessProbe:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - kill -0 $(cat /var/run/defectdojo/celery-beat.pid)
+      initialDelaySeconds: 30
+      periodSeconds: 60
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - kill -0 $(cat /var/run/defectdojo/celery-beat.pid)
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+  worker:
+    image:
+      registry: harbor.208.haist.farm
+      repository: sentinel/defectdojo-django
+      tag: "2.55.4"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 2000m
+        memory: 1Gi
+    livenessProbe:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - celery -A dojo inspect ping -t 5
+      initialDelaySeconds: 30
+      periodSeconds: 60
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - celery -A dojo inspect ping -t 5
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+# -- Initializer job configuration
+# keepSeconds: -1 prevents TTL deletion so ArgoCD doesn't see the Job as Missing
+# and recreate it in a loop. Set to 60 (chart default) only during upgrades.
+initializer:
+  image:
+    registry: harbor.208.haist.farm
+    repository: sentinel/defectdojo-django
+    tag: "2.55.4"
+  staticName: true
+  keepSeconds: -1
+  # Mark the Job as an ArgoCD PostSync hook so it doesn't churn the Application
+  # health state during its ~18-second runtime. Without this, every sync cycle
+  # (including self-heal triggers) re-creates the Job, flipping defectdojo app
+  # health to Progressing briefly and causing RA-5(3) compliance check to
+  # intermittently WARN.
+  #
+  # HookSucceeded (operator decision 2026-04-17, "option b"): the Job and its
+  # pod are deleted immediately after the init completes successfully, so there
+  # is no lingering Completed Job for ArgoCD to reconcile on the next sync
+  # cycle. This eliminates the transient Progressing flap that kept RA-5(3)
+  # from reaching persistent PASS. Trade-off vs. BeforeHookCreation: post-hoc
+  # debugging of a successful run is harder (no pod logs retained), but the
+  # initializer is deterministic schema-migration code -- if it fails we'll see
+  # it because the Job stays; if it succeeds there's nothing to debug.
+  jobAnnotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+  # Disable Istio sidecar for the initializer Job so it can complete cleanly.
+  # The Istio sidecar keeps running after the main container exits, preventing
+  # the Job pod from reaching Completed status and blocking ArgoCD sync.
+  podAnnotations:
+    sidecar.istio.io/inject: "false"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+
+# -- DB migration checker init container
+# Explicit override because dbMigrationChecker.image merges with images.django.image
+# (not django.image). Redundant now that images.django.image is set correctly above,
+# but kept explicit for clarity and resilience against values merge ordering.
+dbMigrationChecker:
+  image:
+    registry: harbor.208.haist.farm
+    repository: sentinel/defectdojo-django
+    tag: "2.55.4"
+
+# -- PostgreSQL: DISABLED bundled subchart, using raw manifests instead
+postgresql:
+  enabled: false
+
+# -- Valkey (cloudpirates subchart v0.15.3)
+valkey:
+  enabled: true
+  auth:
+    existingSecret: defectdojo-valkey-specific
+    existingSecretPasswordKey: valkey-password
+  commonAnnotations:
+    backstage.io/component: defectdojo
+  podSecurityContext: {}
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+# -- Authentik OIDC (primary) + external database + proxy HTTPS configuration
+# OPS-872: Keycloak backend disabled (Keycloak decommission, OPS-867).
+# Note: correct env var is DD_SOCIAL_AUTH_OIDC_AUTH_ENABLED (not OAUTH2_ENABLED) —
+# see DefectDojo settings.dist.py line 121 and 645.
+extraConfigs:
+  # Authentik OIDC backend (OPS-605 Phase 3 → OPS-872 Keycloak cleanup: now sole provider)
+  # Uses generic social_core OIDC backend (OIDC_AUTH_ENABLED).
+  # Autodiscovery: appends /.well-known/openid-configuration to the endpoint below.
+  DD_SOCIAL_AUTH_OIDC_AUTH_ENABLED: "true"
+  DD_SOCIAL_AUTH_OIDC_OIDC_ENDPOINT: "https://auth-next.208.haist.farm/application/o/defectdojo/"
+  DD_SOCIAL_AUTH_OIDC_LOGIN_BUTTON_TEXT: "Login with Authentik"
+  # Database + proxy config
+  DD_DATABASE_HOST: "defectdojo-postgresql"
+  DD_SOCIAL_AUTH_REDIRECT_IS_HTTPS: "True"
+  DD_SECURE_PROXY_SSL_HEADER: "True"
+
+# -- Enable Istio sidecar injection for mTLS mesh
+# Exclude 5432 (PostgreSQL) from Envoy interception so init containers
+# (db-migration-checker) can reach the database before the sidecar proxy starts.
+# NOTE: 6379 (Valkey) must NOT be excluded -- Valkey is meshed and requires mTLS
+# principal identity for the AuthorizationPolicy allow-defectdojo-to-valkey to work.
+# Excluding port 6379 bypasses the proxy, strips mTLS identity, and causes deny-all.
+#
+# reloader.stakater.com/auto: "true" -- Stakater Reloader watches this pod's
+# ConfigMaps and Secrets and triggers a rolling restart when any of them change.
+# This ensures env var updates (e.g. new OIDC creds from ESO) are picked up
+# without a manual pod restart. RBAC for defectdojo namespace is in
+# apps/reloader/rbac-matrix.yaml.
+extraAnnotations:
+  sidecar.istio.io/inject: "true"
+  traffic.sidecar.istio.io/excludeOutboundPorts: "5432"
+  reloader.stakater.com/auto: "true"
+  backstage.io/component: defectdojo

@@ -1,0 +1,30 @@
+---
+# OPS-883 / OPS-1107 — CI namespace-bootstrap ClusterRole (LEAST-PRIVILEGE)
+#
+# This role is intentionally narrow. It grants ONLY the verbs needed for the
+# apply-namespaces workflow step to:
+#   - Check whether a namespace exists (get)
+#   - List namespaces (list) for pre-flight verification
+#   - Create namespaces that don't exist (create)
+#   - Patch namespace metadata (patch) — specifically to add the
+#     argocd.argoproj.io/managed-by label required for ArgoCD sync
+#
+# Explicitly NOT granted (verified in OPS-1107):
+#   - delete namespaces — no accidental namespace destruction
+#   - watch namespaces — not needed; CI run is one-shot
+#   - Any other resource (pods, secrets, configmaps, etc.)
+#   - cluster-admin or any aggregate role
+#
+# See namespace-bootstrap.yml for the workflow that uses this role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ci-namespace-bootstrap
+  annotations:
+    ops.haist.farm/issue: "OPS-883/OPS-1107"
+    ops.haist.farm/purpose: "Allow CI to create and label namespaces for ArgoCD bootstrap"
+    ops.haist.farm/scope: "namespaces only — get/list/create/patch — NO delete"
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "patch"]

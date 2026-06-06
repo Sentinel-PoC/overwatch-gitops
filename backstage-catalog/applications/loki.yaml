@@ -1,0 +1,25 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: loki
+  description: Loki log aggregation system — indexes and stores cluster logs; queried via Grafana
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=loki
+    backstage.io/kubernetes-namespace: observability
+    argocd/app-name: loki
+  links:
+    - url: https://loki.208.haist.farm
+      title: Loki Gateway
+      icon: dashboard
+  tags:
+    - logging
+    - observability
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:alloy

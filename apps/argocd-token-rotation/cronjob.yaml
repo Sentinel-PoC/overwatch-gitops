@@ -1,0 +1,223 @@
+# OPS-1005: ArgoCD API token rotation CronJob.
+# Updated from OPS-1003: Vault auth changed from period-token to AppRole.
+#
+# Rotates API tokens for three ArgoCD service accounts on a monthly schedule:
+#   admin             → Vault secret/mcp.argocd_api_token
+#   overwatch-console → Vault secret/overwatch-console.argocd_api_token
+#   backstage         → Vault secret/backstage.argocd_token
+#
+# For each account the script:
+#   1. Snapshots existing token IDs (to revoke after rotation)
+#   2. Generates a new token via POST /api/v1/account/{name}/token (expiresIn=0)
+#   3. Verifies the new token (HTTP 200 on /api/v1/applications)
+#   4. Patches the Vault KV v2 secret (merge-patch → only the token field is
+#      updated; all other fields in the secret are preserved)
+#   5. Revokes all pre-rotation token IDs for the account
+#
+# ESO refreshInterval is 1h — downstream services pick up the new token
+# within 1 hour of Vault write. No force-annotation needed.
+#
+# Root auth to ArgoCD: admin account password (never expires, no bootstrapping
+# problem even if an API token was previously expired).
+#
+# Vault auth: AppRole (argocd-token-rotation role).
+#   Credentials: VAULT_ROLE_ID + VAULT_SECRET_ID from argocd-rotation-credentials.
+#   AppRole login at run start → short-lived token (TTL=10m, max_ttl=15m).
+#   No long-lived Vault token stored → no 768h max_ttl cap (OPS-1005).
+#
+# Image: harbor.208.haist.farm/sentinel/alpine-tools:3.20
+#   Alpine 3.20 with bash + curl + jq pre-installed (OPS-886)
+#
+# Network egress required (see network-policy.yaml):
+#   argocd.208.haist.farm:443  (ArgoCD HTTPS API)
+#   vault.208.haist.farm:443   (Vault HTTPS API)
+#   DNS port 53 (CoreDNS)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: argocd-token-rotation
+  namespace: argocd-token-rotation
+  labels:
+    app: argocd-token-rotation
+    app.kubernetes.io/part-of: argocd-token-rotation
+  annotations:
+    ops.overwatch/issue: OPS-1005
+    ops.overwatch/description: >
+      Monthly rotation of ArgoCD API tokens for admin, overwatch-console,
+      backstage accounts. Prevents silent credential expiry (OPS-983 class).
+      Vault auth via AppRole (OPS-1005 — replaces period-token from OPS-1003).
+spec:
+  schedule: "0 3 1 * *"          # 03:00 UTC on the 1st of every month
+  concurrencyPolicy: Forbid       # never overlap runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 1             # retry once on transient failure
+      activeDeadlineSeconds: 600  # 10-minute hard cap; rotation should finish in <2 min
+      template:
+        metadata:
+          labels:
+            app: argocd-token-rotation
+        spec:
+          serviceAccountName: argocd-rotation-sa
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: false   # Alpine image; anyuid SCC bound in rbac.yaml
+          imagePullSecrets:
+            - name: harbor-pull-secret
+          containers:
+            - name: rotate
+              image: harbor.208.haist.farm/sentinel/alpine-tools@sha256:d4d965bf0ad4ef0a87fd736e69c1ac39a3a5f06de539f02866a67b7618e9a827
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: argocd-rotation-credentials  # ARGOCD_ADMIN_PASSWORD, VAULT_ROLE_ID, VAULT_SECRET_ID
+              env:
+                - name: ARGOCD_URL
+                  value: "https://argocd.208.haist.farm"
+                - name: VAULT_URL
+                  value: "https://vault.208.haist.farm"
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+
+                  log() {
+                    echo "[argocd-token-rotation] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
+                  }
+
+                  die() {
+                    log "ERROR: $*" >&2
+                    exit 1
+                  }
+
+                  log "Starting ArgoCD token rotation"
+                  log "ArgoCD URL: ${ARGOCD_URL}"
+                  log "Vault URL:  ${VAULT_URL}"
+
+                  # ────────────────────────────────────────────────────
+                  # Step 0 — Authenticate to Vault via AppRole
+                  # OPS-1005: replaces the long-lived period-token with
+                  # a per-run short-lived token (TTL=10m, max_ttl=15m).
+                  # No 768h max_ttl cap. No silent expiry.
+                  # ────────────────────────────────────────────────────
+                  log "Authenticating to Vault via AppRole..."
+                  VAULT_LOGIN_RESP=$(curl -sk --fail-with-body \
+                    -X POST "${VAULT_URL}/v1/auth/approle/login" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"role_id\":\"${VAULT_ROLE_ID}\",\"secret_id\":\"${VAULT_SECRET_ID}\"}")
+
+                  VAULT_TOKEN=$(echo "${VAULT_LOGIN_RESP}" | jq -r '.auth.client_token // empty')
+                  [ -z "${VAULT_TOKEN}" ] && die "AppRole login failed (empty token): ${VAULT_LOGIN_RESP}"
+                  TOKEN_TTL=$(echo "${VAULT_LOGIN_RESP}" | jq -r '.auth.lease_duration // "unknown"')
+                  log "Vault AppRole login succeeded (TTL=${TOKEN_TTL}s)"
+
+                  # ────────────────────────────────────────────────────
+                  # Step 1 — Authenticate to ArgoCD (admin password)
+                  # Uses the admin account password, not an apiKey token.
+                  # Password does not expire → no bootstrapping problem.
+                  # ────────────────────────────────────────────────────
+                  log "Authenticating to ArgoCD..."
+                  SESSION_TOKEN=$(curl -sk --fail-with-body \
+                    -X POST "${ARGOCD_URL}/api/v1/session" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_ADMIN_PASSWORD}\"}" \
+                    | jq -r '.token // empty')
+
+                  [ -z "${SESSION_TOKEN}" ] && die "ArgoCD session auth failed (empty token)"
+                  log "ArgoCD session token obtained"
+
+                  # ────────────────────────────────────────────────────
+                  # rotate_account <account> <vault-path> <vault-field>
+                  # ────────────────────────────────────────────────────
+                  rotate_account() {
+                    local ACCT="$1"
+                    local VAULT_PATH="$2"
+                    local VAULT_FIELD="$3"
+
+                    log "── Rotating account: ${ACCT} (Vault ${VAULT_PATH}.${VAULT_FIELD})"
+
+                    # Snapshot pre-rotation token IDs so we can revoke them after
+                    ACCT_INFO=$(curl -sk "${ARGOCD_URL}/api/v1/account/${ACCT}" \
+                      -H "Authorization: Bearer ${SESSION_TOKEN}")
+                    OLD_TOKEN_IDS=$(echo "${ACCT_INFO}" | jq -r '.tokens[]?.id // empty' 2>/dev/null || true)
+                    OLD_COUNT=$(echo "${OLD_TOKEN_IDS}" | grep -c . 2>/dev/null || echo 0)
+                    log "  Pre-rotation token count for ${ACCT}: ${OLD_COUNT}"
+
+                    # Generate new token (expiresIn=0 → no expiry claim)
+                    log "  Generating new token for ${ACCT}..."
+                    GENERATE_RESP=$(curl -sk --fail-with-body \
+                      -X POST "${ARGOCD_URL}/api/v1/account/${ACCT}/token" \
+                      -H "Authorization: Bearer ${SESSION_TOKEN}" \
+                      -H "Content-Type: application/json" \
+                      -d '{"expiresIn": 0}')
+
+                    NEW_TOKEN=$(echo "${GENERATE_RESP}" | jq -r '.token // empty')
+                    [ -z "${NEW_TOKEN}" ] && die "No token returned for ${ACCT}: ${GENERATE_RESP}"
+
+                    # Verify new token works (GET applications with limit=1)
+                    log "  Verifying new token for ${ACCT}..."
+                    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                      "${ARGOCD_URL}/api/v1/applications?limit=1" \
+                      -H "Authorization: Bearer ${NEW_TOKEN}")
+                    [ "${HTTP_CODE}" != "200" ] && \
+                      die "New ${ACCT} token verification failed: HTTP ${HTTP_CODE}"
+                    log "  Verification passed (HTTP 200)"
+
+                    # Write to Vault via KV v2 merge-patch
+                    # PATCH preserves all other fields in the secret (e.g. secret/mcp has
+                    # keycloak_admin, nvd_api_key, etc. — only argocd_api_token is updated)
+                    log "  Writing new token to Vault ${VAULT_PATH}..."
+                    VAULT_HTTP=$(curl -sk -o /dev/null -w "%{http_code}" \
+                      -X PATCH \
+                      "${VAULT_URL}/v1/secret/data/${VAULT_PATH}" \
+                      -H "X-Vault-Token: ${VAULT_TOKEN}" \
+                      -H "Content-Type: application/merge-patch+json" \
+                      -d "{\"data\":{\"${VAULT_FIELD}\":\"${NEW_TOKEN}\"}}")
+                    [ "${VAULT_HTTP}" != "200" ] && \
+                      die "Vault PATCH ${VAULT_PATH} returned HTTP ${VAULT_HTTP}"
+                    log "  Vault write confirmed (HTTP 200)"
+
+                    # Revoke all pre-rotation tokens for this account
+                    # (prevents accumulation of stale no-expiry tokens)
+                    if [ -n "${OLD_TOKEN_IDS}" ]; then
+                      log "  Revoking ${OLD_COUNT} pre-rotation token(s) for ${ACCT}..."
+                      while IFS= read -r OLD_ID; do
+                        [ -z "${OLD_ID}" ] && continue
+                        REVOKE_HTTP=$(curl -sk -o /dev/null -w "%{http_code}" \
+                          -X DELETE \
+                          "${ARGOCD_URL}/api/v1/account/${ACCT}/token/${OLD_ID}" \
+                          -H "Authorization: Bearer ${SESSION_TOKEN}")
+                        if [ "${REVOKE_HTTP}" = "200" ]; then
+                          log "  Revoked old token ${OLD_ID}"
+                        else
+                          # Log but don't fail — old token just accumulates,
+                          # not a security incident (rotation succeeded)
+                          log "  WARN: revoke ${OLD_ID} returned HTTP ${REVOKE_HTTP} (non-fatal)"
+                        fi
+                      done <<< "${OLD_TOKEN_IDS}"
+                    else
+                      log "  No pre-rotation tokens to revoke for ${ACCT}"
+                    fi
+
+                    log "── ${ACCT}: rotation complete"
+                  }
+
+                  # ────────────────────────────────────────────────────
+                  # Step 2 — Rotate each account
+                  # ────────────────────────────────────────────────────
+                  rotate_account "admin"             "mcp"               "argocd_api_token"
+                  rotate_account "overwatch-console" "overwatch-console" "argocd_api_token"
+                  rotate_account "backstage"         "backstage"         "argocd_token"
+
+                  log "All 3 accounts rotated successfully"
+                  log "ESO will propagate new tokens within refreshInterval (≤ 1h)"
+                  log "Done"

@@ -1,0 +1,31 @@
+---
+# OPS-808 — NFS PersistentVolume backed by TrueNAS
+# OPS-1125 (2026-06-01) — re-pointed to jumbo storage VLAN (192.168.30.205, MTU 9000)
+# Path: /mnt/DATA/logs/victorialogs (created 2026-05-21, mode 0777)
+# Capacity: 500Gi (TrueNAS pool is 3.87 TiB)
+# Reclaim: Retain — data must not be deleted on PVC removal
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: victorialogs-nfs-pv
+  labels:
+    app.kubernetes.io/name: victorialogs
+    app.kubernetes.io/component: storage
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: 192.168.30.205
+    path: /mnt/DATA/logs/victorialogs
+  mountOptions:
+    - hard
+    - nointr
+    - vers=4.1
+    - rsize=65536
+    - wsize=65536
+    - noatime
+    - timeo=600

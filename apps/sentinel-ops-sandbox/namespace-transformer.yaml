@@ -1,0 +1,17 @@
+# NamespaceTransformer — sentinel-ops-sandbox kustomization
+#
+# PURPOSE: Apply namespace: sentinel-ops-sandbox to all resources that do NOT already
+# have an explicit namespace set, while leaving resources with an explicit
+# namespace (e.g. RoleBinding etcd-backup-etcd-reader in openshift-etcd)
+# untouched.
+#
+# CONTEXT: Mirrors prod sentinel-ops NamespaceTransformer pattern (OPS-249).
+# The cross-namespace RoleBinding etcd-backup-etcd-reader must remain in
+# openshift-etcd — unsetOnly: true preserves that explicit namespace.
+apiVersion: builtin
+kind: NamespaceTransformer
+metadata:
+  name: sentinel-ops-namespace
+  namespace: sentinel-ops-sandbox
+namespace: sentinel-ops-sandbox
+unsetOnly: true

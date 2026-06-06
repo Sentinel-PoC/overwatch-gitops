@@ -1,0 +1,26 @@
+# OPS-481 Phase 4: ServiceAccount for langfuse-backup CronJob.
+# No cross-namespace exec needed — pg_dump connects directly to the
+# langfuse-postgresql Service (TCP 5432). Only SCC binding required.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: langfuse-backup-sa
+  namespace: langfuse-backup
+  labels:
+    app: langfuse-backup
+---
+# SCC: anyuid — Alpine-based postgres + mc images may run as UID 0 on OKD.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: langfuse-backup-anyuid
+  labels:
+    app: langfuse-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: langfuse-backup-sa
+    namespace: langfuse-backup

@@ -1,0 +1,22 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/reloader
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,168 @@
+# [OPS-313] update-gitops composite action
+#
+# Clones overwatch-gitops, updates the image ref in the named manifest, and
+# pushes back. Mirrors the GitLab update-gitops stage from
+# ci-templates/supply-chain-pipeline.yml (decommissioned with GitLab, OPS-31).
+#
+# Idempotent: exits 0 with no commit when the image ref is already up to date.
+#
+# OPS-1074: Added image-digest input. When image-digest is provided, the manifest
+# is updated to use @sha256:<digest> instead of :<tag>, producing an immutable
+# pinned reference. The sed pattern replaces both :<tag> and @sha256:... refs so
+# that this step is idempotent regardless of whether the current manifest holds
+# a tag or a prior digest. image-tag is still required for the commit message and
+# for registries that do not support digest-only pushes.
+#
+# Required caller secret: GITOPS_TOKEN — a Forgejo API token for the sentinel-admin
+# user (or any user in the push_whitelist for overwatch-gitops main).
+# Vault path: secret/forgejo-sentinel-admin (to be provisioned; see OPS-313).
+#
+# Usage (tag mode — legacy):
+#   - name: Update GitOps manifest
+#     uses: ./.forgejo/actions/update-gitops
+#     with:
+#       gitops-token: ${{ secrets.GITOPS_TOKEN }}
+#       image-name: sentinel/my-app
+#       image-tag: ${{ env.IMAGE_TAG }}
+#       deploy-file: apps/my-app/deployment.yaml
+#
+# Usage (digest mode — OPS-1074):
+#   - name: Update GitOps manifest (immutable digest)
+#     uses: ./.forgejo/actions/update-gitops
+#     with:
+#       gitops-token: ${{ secrets.GITOPS_TOKEN }}
+#       image-name: sentinel/my-app
+#       image-tag: ${{ env.IMAGE_TAG }}
+#       image-digest: ${{ steps.push.outputs.digest }}
+#       deploy-file: apps/my-app/deployment.yaml
+#
+# Vendoring note (OPS-239): cross-repo uses: references fail through code.forgejo.org.
+# Vendor this file into each consuming repo at the same path.
+# Update this comment with the last sync commit SHA when copying.
+# This source: overwatch-gitops main, OPS-313/OPS-1074.
+
+name: Update GitOps manifest
+description: >
+  Clone overwatch-gitops, update the image ref in the named manifest, commit and
+  push with retry/rebase. No-op if ref already up to date.
+  When image-digest is provided, writes @sha256:<digest> (immutable).
+  Without image-digest, writes :<tag> (legacy tag mode).
+
+inputs:
+  gitops-token:
+    description: >
+      Forgejo API token with push access to overwatch-gitops main branch.
+      Must be in the push_whitelist for the branch protection rule.
+      Store as repo secret GITOPS_TOKEN.
+    required: true
+
+  image-name:
+    description: >
+      Image name without registry prefix (e.g. sentinel/my-app).
+      Used to construct the sed pattern: image: harbor.208.haist.farm/<image-name>[: or @].*
+    required: true
+
+  image-tag:
+    description: >
+      Semver tag for this build (e.g. v3). Used in the commit message regardless
+      of whether image-digest is provided. Also used as the written ref when
+      image-digest is absent (legacy tag mode).
+    required: true
+
+  image-digest:
+    description: >
+      OPS-1074: Content-addressable digest (sha256:<hex>) from the push step
+      (e.g. ${{ steps.push.outputs.digest }}). When provided, the manifest is
+      updated to harbor/<image-name>@sha256:<hex> instead of :<tag>.
+      This produces an immutable reference that cannot be redirected by a
+      registry push after signing. Leave empty for legacy tag mode.
+    required: false
+    default: ""
+
+  deploy-file:
+    description: >
+      Relative path inside overwatch-gitops to the manifest that contains the
+      image: field (e.g. apps/my-app/deployment.yaml).
+    required: true
+
+  harbor-registry:
+    description: Harbor registry hostname.
+    required: false
+    default: harbor.208.haist.farm
+
+  gitops-repo:
+    description: Forgejo remote URL (without credentials).
+    required: false
+    default: forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+
+  max-retries:
+    description: Number of push/rebase attempts before failing.
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Update image ref in GitOps manifest
+      shell: bash
+      env:
+        GITOPS_TOKEN: ${{ inputs.gitops-token }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+        DEPLOY_FILE: ${{ inputs.deploy-file }}
+        HARBOR_REGISTRY: ${{ inputs.harbor-registry }}
+        GITOPS_REPO: ${{ inputs.gitops-repo }}
+        MAX_RETRIES: ${{ inputs.max-retries }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${DEPLOY_FILE}" ]; then
+          echo "deploy-file input is empty — skipping gitops update"
+          exit 0
+        fi
+
+        # OPS-1074: prefer digest (immutable) over tag (mutable) when provided.
+        if [ -n "${IMAGE_DIGEST}" ]; then
+          FULL_IMAGE="${HARBOR_REGISTRY}/${IMAGE_NAME}@${IMAGE_DIGEST}"
+          COMMIT_MSG="[ci] Pin ${IMAGE_NAME} to ${IMAGE_TAG}@${IMAGE_DIGEST} [OPS-1074]"
+          echo "=== OPS-1074 update-gitops composite (digest/immutable mode) ==="
+        else
+          FULL_IMAGE="${HARBOR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+          COMMIT_MSG="[ci] Update ${IMAGE_NAME} to ${IMAGE_TAG} [OPS-313]"
+          echo "=== OPS-313 update-gitops composite (tag mode) ==="
+        fi
+        echo "Target:    ${DEPLOY_FILE}"
+        echo "New image: ${FULL_IMAGE}"
+
+        git config --global user.name "Sentinel CI"
+        git config --global user.email "ci@haist.farm"
+
+        REPO_URL="https://sentinel-admin:${GITOPS_TOKEN}@${GITOPS_REPO}"
+        rm -rf /tmp/gitops-update
+        git clone --depth 1 --branch main "${REPO_URL}" /tmp/gitops-update
+        cd /tmp/gitops-update
+
+        # Replace any existing image ref (tag-based :... or digest-based @sha256:...)
+        # so this step is idempotent across both ref styles.
+        sed -i "s|image: ${HARBOR_REGISTRY}/${IMAGE_NAME}[:@].*|image: ${FULL_IMAGE}|" "${DEPLOY_FILE}"
+
+        if git diff --quiet; then
+          echo "No changes — image ref already up to date (${FULL_IMAGE})"
+          exit 0
+        fi
+
+        git add "${DEPLOY_FILE}"
+        git commit -m "${COMMIT_MSG}"
+
+        for i in $(seq 1 "${MAX_RETRIES}"); do
+          if git push origin main; then
+            echo "Image ref updated successfully (attempt ${i}/${MAX_RETRIES})"
+            exit 0
+          fi
+          echo "Push failed (attempt ${i}/${MAX_RETRIES}), rebasing..."
+          git pull --rebase origin main
+        done
+
+        echo "::error::Failed to push after ${MAX_RETRIES} attempts"
+        exit 1

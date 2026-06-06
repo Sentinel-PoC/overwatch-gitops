@@ -1,0 +1,25 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: overwatch-console
+  description: Overwatch security operations console — internal tool for platform security posture visibility
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=overwatch-console
+    backstage.io/kubernetes-namespace: overwatch-console
+    argocd/app-name: overwatch-console
+  links:
+    - url: https://console-sec.208.haist.farm
+      title: Overwatch Security Console
+      icon: security
+  tags:
+    - security
+    - console
+    - platform
+    - application
+    - overwatch
+spec:
+  type: website
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

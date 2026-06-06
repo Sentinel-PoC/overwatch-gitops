@@ -1,0 +1,163 @@
+planeVersion: v0.24.0
+
+dockerRegistry:
+  enabled: false
+
+ingress:
+  enabled: false
+  appHost: "plane.208.haist.farm"
+
+ssl:
+  generateCerts: false
+
+# --- Infrastructure: External PostgreSQL (raw manifests in apps/plane/) ---
+postgres:
+  local_setup: false
+
+# --- Infrastructure: Valkey (chart-managed) ---
+redis:
+  local_setup: true
+  # OPS-1165 pilot: digest-pinned (plane chart uses this string verbatim in pod spec).
+  # Tag: 7.2.12-alpine3.23. Harbor digest as of 2026-06-03. Update via mirror-upstream-image.sh
+  # then update this file when the image is re-signed.
+  image: harbor.208.haist.farm/sentinel/valkey@sha256:db7675f9627ab5ea395dcfc817bfc332a4d6757f96782856c3d0e13def8557b5
+  servicePort: 6379
+  storageClass: nfs-storage
+  volumeSize: 2Gi
+  pullPolicy: IfNotPresent
+
+# --- Infrastructure: RabbitMQ (chart-managed) ---
+rabbitmq:
+  local_setup: true
+  # OPS-1165 pilot: digest-pinned. Tag: 3.13.7-management-alpine. Harbor digest as of 2026-06-03.
+  image: harbor.208.haist.farm/sentinel/rabbitmq@sha256:dd304be0d945869c49ff122ea898d3a1460e5d7a207e661e831572bae4d51992
+  pullPolicy: IfNotPresent
+  servicePort: 5672
+  managementPort: 15672
+  storageClass: nfs-storage
+  volumeSize: 1Gi
+  default_user: plane
+  default_password: plane
+
+# --- Infrastructure: MinIO (chart-managed, in-cluster) ---
+minio:
+  local_setup: true
+  # OPS-1165 pilot: digest-pinned. Tag: latest. Harbor digest as of 2026-06-03.
+  image: harbor.208.haist.farm/sentinel/minio@sha256:a614d3fd833e346ab37cd0ff0c540f88d5d7ed0d6f0034b20418bb91e1769a51
+  # OPS-1165 pilot: digest-pinned mc sidecar. Harbor digest as of 2026-06-03.
+  image_mc: harbor.208.haist.farm/sentinel/mc@sha256:dce495b4f330bf87354c62743e06c3c7d68eedd23f8f94853a441931469cebdb
+  pullPolicy: IfNotPresent
+  root_user: plane-admin
+  root_password: placeholder-rotated-via-vault
+  storageClass: nfs-storage
+  volumeSize: 10Gi
+  env:
+    minio_endpoint_ssl: false
+
+# --- Application Services ---
+web:
+  replicas: 1
+  memoryLimit: 1000Mi
+  cpuLimit: 500m
+  cpuRequest: 50m
+  memoryRequest: 128Mi
+  image: harbor.208.haist.farm/sentinel/plane-frontend
+  pullPolicy: IfNotPresent
+
+space:
+  replicas: 1
+  memoryLimit: 1000Mi
+  cpuLimit: 500m
+  cpuRequest: 50m
+  memoryRequest: 128Mi
+  image: harbor.208.haist.farm/sentinel/plane-space
+  pullPolicy: IfNotPresent
+
+admin:
+  replicas: 1
+  memoryLimit: 1000Mi
+  cpuLimit: 500m
+  cpuRequest: 50m
+  memoryRequest: 128Mi
+  image: harbor.208.haist.farm/sentinel/plane-admin
+  pullPolicy: IfNotPresent
+
+live:
+  replicas: 1
+  memoryLimit: 1000Mi
+  cpuLimit: 500m
+  cpuRequest: 50m
+  memoryRequest: 128Mi
+  # SEC-59 Track A: custom image with axios 1.15.0 (CVE-2026-40175 + CVE-2025-62718 mitigated)
+  # Image: harbor.208.haist.farm/sentinel/plane-live-custom:stable (digest sha256:e97e5ee160951aa396409ecaf11d481e0f54df32c3de092b08a6402664b3dcb7)
+  # Build: makeplane/plane@preview branch, commit 39325d28+3 (axios 1.15.0 confirmed in build log)
+  # Cosign: signed, tlog index 1340789477. Trivy: 0 CVE-2026-40175/CVE-2025-62718 findings.
+  # Revert: when upstream ships v1.3.1+ with axios>=1.15.0, set back to: harbor.208.haist.farm/sentinel/plane-live
+  image: harbor.208.haist.farm/sentinel/plane-live-custom
+  pullPolicy: Always
+
+api:
+  replicas: 2
+  memoryLimit: 1500Mi      # was 1000Mi (+50%) — OPS-764 readiness flap fix
+  cpuLimit: 1000m          # was 500m (2x) — OPS-764 readiness flap fix
+  cpuRequest: 200m         # was 50m (4x) — gives k8s scheduler real CPU to reserve
+  memoryRequest: 512Mi     # was 256Mi (2x) — OPS-764 readiness flap fix
+  image: harbor.208.haist.farm/sentinel/plane-backend
+  pullPolicy: IfNotPresent
+
+worker:
+  replicas: 1
+  memoryLimit: 2000Mi
+  cpuLimit: 500m
+  cpuRequest: 50m
+  memoryRequest: 512Mi
+  image: harbor.208.haist.farm/sentinel/plane-backend
+  pullPolicy: IfNotPresent
+
+beatworker:
+  replicas: 1
+  memoryLimit: 1000Mi
+  cpuLimit: 500m
+  cpuRequest: 50m
+  memoryRequest: 128Mi
+  image: harbor.208.haist.farm/sentinel/plane-backend
+  pullPolicy: IfNotPresent
+
+# --- Secrets: ExternalSecrets provide these K8s Secrets ---
+external_secrets:
+  app_env_existingSecret: plane-app-env
+  rabbitmq_existingSecret: plane-rabbitmq-creds
+  pgdb_existingSecret: ''
+  doc_store_existingSecret: ''
+  live_env_existingSecret: ''
+
+# --- Environment (non-secret values) ---
+env:
+  pgdb_remote_url: ""
+  pgdb_username: plane
+  pgdb_password: placeholder
+  pgdb_name: plane
+
+  remote_redis_url: ""
+
+  docstore_bucket: "uploads"
+  doc_upload_size_limit: "5242880"
+
+  aws_access_key: ""
+  aws_secret_access_key: ""
+  aws_region: ""
+  aws_s3_endpoint_url: ""
+
+  secret_key: "placeholder-managed-by-external-secret"
+
+  sentry_dsn: ""
+  sentry_environment: ""
+
+  cors_allowed_origins: "https://plane.208.haist.farm"
+  default_cluster_domain: cluster.local
+
+  live_sentry_dsn: ""
+  live_sentry_environment: ""
+  live_sentry_traces_sample_rate: ""
+
+  api_key_rate_limit: "600/minute"

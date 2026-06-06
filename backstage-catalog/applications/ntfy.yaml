@@ -1,0 +1,24 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ntfy
+  description: Ntfy push notification server — delivers platform alerts and monitoring notifications
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=ntfy
+    backstage.io/kubernetes-namespace: health-monitoring
+    argocd/app-name: ntfy
+  links:
+    - url: https://ntfy.208.haist.farm
+      title: Ntfy Notification Server
+      icon: notification
+  tags:
+    - notifications
+    - alerting
+    - application
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ntfy
+  namespace: health-monitoring
+  labels:
+    app.kubernetes.io/name: ntfy
+spec:
+  host: ntfy.208.haist.farm
+  to:
+    kind: Service
+    name: ntfy
+    weight: 100
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

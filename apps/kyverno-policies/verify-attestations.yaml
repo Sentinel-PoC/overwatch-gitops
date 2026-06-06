@@ -1,0 +1,103 @@
+---
+# SEC-62: Verify SLSA provenance attestations on sentinel/* images.
+#
+# This policy is a sibling to verify-image-signatures.yaml which checks
+# cosign signatures. That policy proves WHO signed; this policy proves
+# HOW the image was built (provenance attestation).
+#
+# Rollout mode: audit (logs violations, admits pods).
+# Flip to Enforce after one day of clean audit logs with no false positives.
+# See SEC-62 acceptance criteria — this is intentional staged rollout.
+# DO NOT change validationFailureAction to Enforce without operator approval.
+#
+# NIST controls: SR-4 (Provenance), CM-14 (Signed Components), SA-12 (Supply Chain)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-attestations
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Replace=true
+    policies.kyverno.io/title: Verify SLSA Provenance Attestations
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Verify SLSA v1.0 provenance attestations on sentinel/* images from Harbor.
+      Attestations must be signed with the project cosign key and include a
+      buildDefinition.externalParameters.source.repository matching our Forgejo
+      instance. Deployed in audit mode (SEC-62) — violations are logged but pods
+      are admitted. Flip to Enforce after confirming no false positives.
+    sec-issue: "SEC-62"
+    rollout-mode: "audit — flip to Enforce after 24h clean run"
+spec:
+  # AUDIT MODE: logs violations but does not block admission.
+  # Change to Enforce only after operator review of audit logs.
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  background: true
+  webhookTimeoutSeconds: 15
+  rules:
+    - name: verify-slsa-provenance-attestation
+      # SEC-42 (2026-04-26): namespace allowlist removed (mirror of SEC-41
+      # for sibling verify-image-signatures policy). Coverage now driven
+      # by imageReferences. Stays in Audit mode per SEC-62 rollout — flipping
+      # to Enforce is out of scope here. Wider audit signal = better data
+      # for the eventual Enforce-mode flip decision.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - openshift
+              namespaceSelector:
+                matchExpressions:
+                  - key: kubernetes.io/metadata.name
+                    operator: Matches
+                    values:
+                      - "openshift-*"
+      verifyImages:
+        - imageReferences:
+            - "harbor.208.haist.farm/sentinel/*"
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEeoZ6uG2ZJhmfixK+kqpiKQlWwJIb
+                      n/B7orsb2bAk8l/mlmsd1jebbdtNLoG1F6qgbvqOXLDwwSqlS/qXR5kUrg==
+                      -----END PUBLIC KEY-----
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
+          attestations:
+            - predicateType: https://slsa.dev/provenance/v1
+              conditions:
+                - all:
+                    # Builder must be our Forgejo Actions runner
+                    - key: "{{ predicate.runDetails.builder.id }}"
+                      operator: AnyIn
+                      value:
+                        - "https://forgejo.208.haist.farm/sentinel-admin/sentinel-iac/actions/runner"
+                        - "https://forgejo.208.haist.farm/sentinel-admin/overwatch-console/actions/runner"
+                        - "https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops/actions/runner"
+                    # Source repository must be within our Forgejo instance
+                    - key: "{{ predicate.buildDefinition.externalParameters.source.repository }}"
+                      operator: AnyIn
+                      value:
+                        - "https://forgejo.208.haist.farm/sentinel-admin/sentinel-iac"
+                        - "https://forgejo.208.haist.farm/sentinel-admin/overwatch-console"
+                        - "https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops"
+          required: true
+          mutateDigest: false
+          verifyDigest: false
+          useCache: true
+          imageRegistryCredentials:
+            secrets:
+              - harbor-pull-secret

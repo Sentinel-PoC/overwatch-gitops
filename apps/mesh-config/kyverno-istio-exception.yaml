@@ -1,0 +1,32 @@
+---
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: istio-sidecar-exception
+  namespace: kyverno
+spec:
+  exceptions:
+    - policyName: require-run-as-nonroot
+      ruleNames:
+        - run-as-nonroot
+    - policyName: disallow-latest-tag
+      ruleNames:
+        - no-latest-tag
+  match:
+    any:
+      - resources:
+          kinds:
+            - Pod
+          namespaces:
+            - backstage
+            - defectdojo
+            - demo
+            - harbor
+            - homepage
+            - istio-ingress
+            - media
+            - monitoring
+            - netbox
+          containers:
+            - istio-proxy
+            - istio-init

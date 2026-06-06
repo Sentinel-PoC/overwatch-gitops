@@ -1,0 +1,80 @@
+# OPS-1003: Network policies for argocd-token-rotation namespace.
+#
+# The CronJob only needs:
+#   Egress  → argocd.208.haist.farm:443  (ArgoCD HTTPS API)
+#   Egress  → vault.208.haist.farm:443   (Vault HTTPS API)
+#   Egress  → CoreDNS (kube-dns) port 53 (name resolution for both FQDNs)
+#   Ingress → none (CronJob initiates all connections)
+#
+# All other traffic (intra-cluster, inter-namespace) is denied.
+---
+# Default deny-all ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: argocd-token-rotation
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1003
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Default deny-all egress (except DNS and the two HTTPS endpoints below)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: argocd-token-rotation
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1003
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+---
+# Allow egress to CoreDNS (port 53 TCP+UDP)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: argocd-token-rotation
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1003
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Allow egress to argocd.208.haist.farm and vault.208.haist.farm on 443.
+# Both services are external to the cluster (Istio ingress / direct HTTPS).
+# Using 0.0.0.0/0 on port 443 scoped to the rotation pods — the deny-all
+# rule above ensures no other egress is permitted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-argocd-vault-egress
+  namespace: argocd-token-rotation
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1003
+spec:
+  podSelector:
+    matchLabels:
+      app: argocd-token-rotation
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP

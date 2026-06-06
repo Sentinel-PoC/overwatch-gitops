@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy-logging
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/component: log-shipper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy-logging
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: logging

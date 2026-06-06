@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: langfuse-ch-backup
+  namespace: langfuse
+  labels:
+    app.kubernetes.io/name: clickhouse-backup
+    app.kubernetes.io/instance: langfuse
+spec:
+  schedule: "30 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+          imagePullSecrets:
+          - name: harbor-pull-secret
+          containers:
+          - name: backup
+            image: harbor.208.haist.farm/sentinel/clickhouse-server@sha256:800eaef3260b5995f389d3d2ad14234ad4aff1190e7ee1eca89a7947d3108364
+            imagePullPolicy: IfNotPresent
+            env:
+            # SEC-48: password sourced from Vault via langfuse-clickhouse-creds
+            # ExternalSecret. See manifest for rotation procedure.
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-clickhouse-creds
+                  key: CLICKHOUSE_PASSWORD
+            envFrom:
+            - secretRef:
+                name: langfuse-minio-creds
+            command:
+            - sh
+            - -c
+            - |
+              set -e
+              TS=$(date -u +%Y%m%dT%H%M%SZ)
+              # OPS-180: Use trailing-slash (S3Directory format) instead of .zip.
+              # CH 25.8.22.28 has a segfault in ZipArchiveWriter/minizip when writing
+              # ZIP archives to S3 (DB::ZipArchiveWriter::WriteBufferFromZipArchive dtor,
+              # mz_stream_zlib_close → NULL pointer deref). S3Directory format bypasses
+              # the ZipArchiveWriter code path entirely and writes individual files.
+              # RESTORE syntax: BACKUP DATABASE default FROM S3('ENDPOINT/langfuse-backups/NAME/', ...)
+              BACKUP_NAME="langfuse-ch-${TS}/"
+              echo "[backup] Starting BACKUP DATABASE default TO S3 (bucket=langfuse-backups, prefix=${BACKUP_NAME})"
+              clickhouse-client \
+                --host langfuse-clickhouse \
+                --port 9000 \
+                --user default \
+                --password "${CLICKHOUSE_PASSWORD}" \
+                --query "BACKUP DATABASE default TO S3('${MINIO_ENDPOINT}/langfuse-backups/${BACKUP_NAME}', '${MINIO_ACCESS_KEY}', '${MINIO_SECRET_KEY}') SETTINGS async=false"
+              echo "[backup] Backup complete: s3://langfuse-backups/${BACKUP_NAME}"

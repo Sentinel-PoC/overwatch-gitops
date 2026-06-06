@@ -1,0 +1,71 @@
+# SEC-59 compensating control — lateral movement mitigation
+# Applied: 2026-04-19 per NIST SI-2 compensating control requirement
+# IMPORTANT: This NetworkPolicy closes intra-cluster lateral movement to plane-live.
+# It does NOT reduce external CVE exposure — internet traffic flows through OCP HAProxy
+# Router (openshift-ingress namespace) which bypasses NetworkPolicy for ingress.
+# Full remediation is Track A: custom image build with axios >=1.15.0 (SEC-59).
+#
+# DefectDojo findings covered as compensating control: #8160, #8161, #8809, #8811
+# CVEs: CVE-2026-40175 (RCE via prototype pollution), CVE-2025-62718 (SSRF)
+#
+# CNI: OVN-Kubernetes (standard OCP 4.x). No Cilium — stock NetworkPolicy enforced.
+# Pod label confirmed: app.name=plane-plane-live (verified 2026-04-19 via oc get pods --show-labels)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-plane-live-ingress
+  namespace: plane
+  annotations:
+    sec59/rationale: "Lateral movement mitigation while axios CVE remediation (Path A) is in progress. See SEC-59."
+    sec59/defectdojo-findings: "8160,8161,8809,8811"
+    sec59/applied: "2026-04-19"
+    sec59/limitation: "Does NOT block external traffic — OCP HAProxy Router bypasses NetworkPolicy. Closes intra-cluster lateral movement only."
+    sec59/track-a-eta: "72h — custom image with axios 1.15.0 in progress"
+spec:
+  podSelector:
+    matchLabels:
+      app.name: plane-plane-live
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow OCP HAProxy Router (openshift-ingress namespace) — internet-facing WebSocket + HTTP traffic
+  # Note: This allows all internet-user traffic through the Router. The CVE exposure is via this path.
+  # The NetworkPolicy cannot filter by client IP at this layer — that is a Router/WAF concern.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-ingress
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow plane-web frontend pod (SSR + WebSocket proxy on behalf of browser)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.name: plane-plane-web
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow plane-api (internal service calls to plane-live if any)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.name: plane-plane-api
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow Prometheus scrape from monitoring namespace (openshift-monitoring or cattle-monitoring-system)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-monitoring
+    ports:
+    - protocol: TCP
+      port: 3000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cattle-monitoring-system
+    ports:
+    - protocol: TCP
+      port: 3000

@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cfwc-website
+  description: CFWC public website deployed on the Sentinel OKD platform via Istio ingress
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=cfwc-website
+    backstage.io/kubernetes-namespace: cfwc-website
+    argocd/app-name: cfwc-website
+  links:
+    - url: https://cfwc.haist.farm
+      title: CFWC Website
+      icon: web
+  tags:
+    - website
+    - application
+    - overwatch
+spec:
+  type: website
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

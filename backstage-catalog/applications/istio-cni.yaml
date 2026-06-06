@@ -1,0 +1,22 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: istio-cni
+  description: Istio CNI namespace network policies — baseline NetworkPolicies for the istio-cni namespace
+  annotations:
+    backstage.io/kubernetes-namespace: istio-cni
+    argocd/app-name: istio-cni-netpol
+  tags:
+    - networking
+    - istio
+    - mesh
+    - policy
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:istio-controlplane

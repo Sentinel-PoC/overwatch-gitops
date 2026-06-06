@@ -1,0 +1,562 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-wazuh-vulnerabilities
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+data:
+  wazuh-vulnerabilities.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "id": 100,
+          "title": "Vulnerability Overview",
+          "type": "row"
+        },
+        {
+          "id": 1,
+          "title": "Total Vulnerabilities",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_vulnerabilities_grand_total",
+              "legendFormat": "Total",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 5000 },
+                  { "color": "orange", "value": 15000 },
+                  { "color": "red", "value": 25000 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "N/A"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "value_and_name",
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center"
+          }
+        },
+        {
+          "id": 2,
+          "title": "Critical",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"Critical\"}",
+              "legendFormat": "Critical",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "value_and_name",
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center"
+          }
+        },
+        {
+          "id": 3,
+          "title": "High",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"High\"}",
+              "legendFormat": "High",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 1 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "value_and_name",
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center"
+          }
+        },
+        {
+          "id": 4,
+          "title": "Medium",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"Medium\"}",
+              "legendFormat": "Medium",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "value_and_name",
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center"
+          }
+        },
+        {
+          "id": 5,
+          "title": "Low",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"Low\"}",
+              "legendFormat": "Low",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "blue", "value": 1 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "value_and_name",
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center"
+          }
+        },
+        {
+          "id": 6,
+          "title": "Exporter Last Scrape",
+          "type": "stat",
+          "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "time() - wazuh_vuln_exporter_last_scrape_timestamp",
+              "legendFormat": "Seconds ago",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 600 },
+                  { "color": "red", "value": 1800 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "N/A"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "value_and_name",
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center"
+          }
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+          "id": 101,
+          "title": "Critical CVEs",
+          "type": "row"
+        },
+        {
+          "id": 7,
+          "title": "Critical CVEs — Findings per CVE",
+          "type": "bargauge",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_critical_cve_count",
+              "legendFormat": "{{cve}}",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "orange", "value": null },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "valueMode": "text",
+            "showUnfilled": true,
+            "minVizWidth": 8,
+            "minVizHeight": 16,
+            "namePlacement": "auto"
+          }
+        },
+        {
+          "id": 8,
+          "title": "Critical CVEs — Agents Affected",
+          "type": "bargauge",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_critical_cve_agents",
+              "legendFormat": "{{cve}}",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "yellow", "value": null },
+                  { "color": "orange", "value": 3 },
+                  { "color": "red", "value": 6 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "max": 9
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "valueMode": "text",
+            "showUnfilled": true,
+            "minVizWidth": 8,
+            "minVizHeight": 16,
+            "namePlacement": "auto"
+          }
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+          "id": 102,
+          "title": "Vulnerabilities by Agent",
+          "type": "row"
+        },
+        {
+          "id": 9,
+          "title": "Vulnerability Distribution by Agent",
+          "type": "barchart",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_agent_vulnerabilities{severity=\"Critical\"}",
+              "legendFormat": "Critical — {{agent}}",
+              "refId": "A",
+              "instant": true
+            },
+            {
+              "expr": "wazuh_agent_vulnerabilities{severity=\"High\"}",
+              "legendFormat": "High — {{agent}}",
+              "refId": "B",
+              "instant": true
+            },
+            {
+              "expr": "wazuh_agent_vulnerabilities{severity=\"Medium\"}",
+              "legendFormat": "Medium — {{agent}}",
+              "refId": "C",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "barAlignment": 0,
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "stacking": { "mode": "normal" }
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": "^Critical" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byRegexp", "options": "^High" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byRegexp", "options": "^Medium" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "tooltip": { "mode": "multi", "sort": "desc" },
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "orientation": "horizontal",
+            "barWidth": 0.8,
+            "groupWidth": 0.7,
+            "stacking": "normal",
+            "showValue": "auto"
+          }
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+          "id": 103,
+          "title": "Trends",
+          "type": "row"
+        },
+        {
+          "id": 10,
+          "title": "Total Vulnerabilities Over Time",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"Critical\"}",
+              "legendFormat": "Critical",
+              "refId": "A"
+            },
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"High\"}",
+              "legendFormat": "High",
+              "refId": "B"
+            },
+            {
+              "expr": "wazuh_vulnerabilities_total{severity=\"Medium\"}",
+              "legendFormat": "Medium",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 15,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" },
+                "gradientMode": "scheme"
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Critical" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "High" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Medium" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "tooltip": { "mode": "multi", "sort": "desc" },
+            "legend": { "displayMode": "list", "placement": "bottom" }
+          }
+        },
+        {
+          "id": 11,
+          "title": "Critical CVE Count Over Time",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+          "datasource": { "type": "prometheus", "uid": "P660CC246A1C19F5F" },
+          "targets": [
+            {
+              "expr": "count(wazuh_critical_cve_count)",
+              "legendFormat": "Unique Critical CVEs",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(wazuh_critical_cve_count)",
+              "legendFormat": "Total Critical Findings",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" },
+                "gradientMode": "scheme"
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Unique Critical CVEs" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-red" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Total Critical Findings" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "tooltip": { "mode": "multi", "sort": "desc" },
+            "legend": { "displayMode": "list", "placement": "bottom" }
+          }
+        }
+      ],
+      "refresh": "5m",
+      "schemaVersion": 39,
+      "tags": ["sentinel", "security", "wazuh", "vulnerabilities"],
+      "templating": {
+        "list": []
+      },
+      "time": { "from": "now-24h", "to": "now" },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Wazuh Vulnerabilities",
+      "uid": "wazuh-vulnerabilities",
+      "version": 1
+    }

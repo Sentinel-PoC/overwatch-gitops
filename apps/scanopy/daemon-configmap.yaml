@@ -1,0 +1,42 @@
+---
+# OPS-398: Scanopy daemon configuration.
+# Confirmed env vars sourced from .env.example and docker-compose.yml at v0.16.2.
+#
+# OPERATOR SCOPE DECISION (OPS-1122, 2026-06-01):
+# Scan scope = 192.168.12.0/24 (platform/management VLAN) ONLY.
+# No IoT, Personal, Guest, or other VLANs.
+#
+# SCAN SCOPE IMPLEMENTATION — SCANOPY_INTERFACES (OPS-1122):
+# SCANOPY_INTERFACES restricts ARP scanning to named network interfaces.
+# Confirmed real env var in config.rs at v0.16.2 (see AppConfig.interfaces field
+# and special SCANOPY_INTERFACES parsing for comma-separated values).
+# OKD nodes are on 10.0.0.0/24 ONLY (confirmed 2026-06-01: all three masters have
+# InternalIP 10.0.0.221-223, no 192.168.12.x NIC). Therefore the in-cluster daemon
+# cannot ARP-scan 192.168.12.0/24 (L2 cannot cross subnets; no 12.x NIC).
+# SCANOPY_INTERFACES is set to the OKD primary interface (ens3/ens192/eth0) as a
+# defensive scope guard: even if the daemon somehow gained 12.x reachability,
+# it will not scan other VLANs.
+# When the daemon is moved out-of-cluster (OPS-1122 Phase 2 follow-up issue),
+# update SCANOPY_INTERFACES to the 192.168.12.0/24 interface of the host VM/LXC.
+#
+# ADDITIONAL SCOPE NOTES:
+# - SCANOPY_EXCLUDE_HOSTS is NOT a real Scanopy env var at v0.16.2 (silently ignored).
+# - Additional host exclusions (e.g. 192.168.12.55 = operator workstation) must be
+#   configured post-deploy via the Scanopy web UI (Networks -> scan scope / exclusions).
+#   Per platform policy feedback_workstation_no_lockout, 192.168.12.55 MUST be excluded.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scanopy-daemon-config
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: daemon
+data:
+  # Log level — confirmed against .env.example at v0.16.2
+  SCANOPY_LOG_LEVEL: "info"
+  # Interface restriction: limit ARP scanning to the OKD node primary interface.
+  # OKD nodes are on 10.0.0.0/24 only — this is a defensive scope guard.
+  # When daemon is moved out-of-cluster, update to the 192.168.12.0/24 interface.
+  # SCANOPY_INTERFACES is a real v0.16.2 env var (config.rs AppConfig.interfaces).
+  SCANOPY_INTERFACES: "ens3"

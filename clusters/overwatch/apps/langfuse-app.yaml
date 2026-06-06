@@ -1,0 +1,56 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: langfuse
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: langfuse
+      targetRevision: 1.5.24
+      helm:
+        releaseName: langfuse
+        valueFiles:
+          - $values/apps/langfuse/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/langfuse
+      directory:
+        recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: langfuse
+  ignoreDifferences:
+    - kind: PersistentVolumeClaim
+      jqPathExpressions:
+        - .spec.resources.requests.storage
+    # OPS-110 (2026-05-09): Removed stale ignoreDifferences entries for langfuse-nextauth
+    # and langfuse-postgresql.
+    #
+    # SEC-34 (2026-04-24) added those entries because the Helm chart generated both Secrets
+    # from plaintext values in values.yaml, and ArgoCD would show OutOfSync on their .data.
+    #
+    # OPS-110 migrates ALL credentials to Vault-backed ExternalSecrets:
+    #   - langfuse.nextauth.secret now uses secretKeyRef → chart template
+    #     (templates/nextauth-secret.yaml) guards on `.Values.langfuse.nextauth.secret.value`
+    #     which is now empty → template does NOT render → no langfuse-nextauth Secret from chart
+    #   - postgresql.auth now uses existingSecret → chart template
+    #     (templates/postgresql-secret.yaml) guards on `.Values.postgresql.auth.password`
+    #     which is now empty → template does NOT render → no langfuse-postgresql Secret from chart
+    #
+    # ESO-managed Secrets (langfuse-app-creds, langfuse-pg-creds, etc.) are not in git
+    # and not tracked by ArgoCD — their .data drift is ESO's concern, not ArgoCD's.
+    # No ignoreDifferences entries needed for ESO-managed Secrets.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

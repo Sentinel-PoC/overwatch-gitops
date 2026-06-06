@@ -1,0 +1,59 @@
+# OPS-681 Phase 2 — ClickHouse PVC fill alert
+# Prevents recurrence of OPS-680 (44h CrashLoopBackOff from 100% PVC fill).
+# Phases 1 (CH TTL ALTER TABLE) and 3 (PV spec patch) are tracked separately,
+# blocked behind OPS-749 (JIT SSH cert / cluster API access).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: langfuse-clickhouse-pvc-fill
+  namespace: langfuse
+  labels:
+    app.kubernetes.io/name: langfuse-clickhouse
+    app.kubernetes.io/part-of: langfuse
+spec:
+  groups:
+    - name: langfuse.clickhouse.pvc
+      interval: 1m
+      rules:
+        - alert: LangfuseClickHousePVCWarn
+          expr: |
+            kubelet_volume_stats_used_bytes{namespace="langfuse", persistentvolumeclaim="langfuse-clickhouse-data"}
+            /
+            kubelet_volume_stats_capacity_bytes{namespace="langfuse", persistentvolumeclaim="langfuse-clickhouse-data"}
+            > 0.80
+          for: 15m
+          labels:
+            severity: warning
+            team: ops
+            service: langfuse-clickhouse
+            pvc: langfuse-clickhouse-data
+          annotations:
+            summary: "ClickHouse PVC {{ $labels.persistentvolumeclaim }} above 80% full"
+            description: >-
+              PVC {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }}
+              is {{ $value | humanizePercentage }} full (threshold: 80%).
+              OPS-680 root cause was this PVC reaching 100%, causing a 44h CrashLoopBackOff.
+              Investigate ClickHouse data growth and consider running TTL cleanup (OPS-681 Phase 1).
+            runbook_url: "https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/baaf983d-6242-46ae-b1fb-0370d81fa1b7"
+
+        - alert: LangfuseClickHousePVCCritical
+          expr: |
+            kubelet_volume_stats_used_bytes{namespace="langfuse", persistentvolumeclaim="langfuse-clickhouse-data"}
+            /
+            kubelet_volume_stats_capacity_bytes{namespace="langfuse", persistentvolumeclaim="langfuse-clickhouse-data"}
+            > 0.90
+          for: 5m
+          labels:
+            severity: critical
+            team: ops
+            service: langfuse-clickhouse
+            pvc: langfuse-clickhouse-data
+          annotations:
+            summary: "ClickHouse PVC {{ $labels.persistentvolumeclaim }} above 90% full — imminent crash risk"
+            description: >-
+              PVC {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }}
+              is {{ $value | humanizePercentage }} full (threshold: 90%).
+              ClickHouse will OOM-crash when PVC reaches 100% — intervene immediately.
+              Options: (1) grow TrueNAS zvol + patch PV/PVC spec (OPS-681 Phase 3),
+              (2) run ClickHouse TTL OPTIMIZE to reclaim space (OPS-681 Phase 1).
+            runbook_url: "https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/baaf983d-6242-46ae-b1fb-0370d81fa1b7"

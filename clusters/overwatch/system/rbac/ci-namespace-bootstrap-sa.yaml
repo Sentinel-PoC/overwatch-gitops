@@ -1,0 +1,14 @@
+---
+# OPS-883 / OPS-1107 — CI namespace-bootstrap ServiceAccount
+# Namespace: openshift-gitops (where other CI SAs live — see arch-vault-reader)
+# Purpose: Scoped identity for the apply-namespaces CI job in namespace-bootstrap.yml
+# Scope: LEAST-PRIVILEGE — paired ClusterRole allows ONLY namespace get/list/create/patch.
+#        No cluster-admin. No pod/secret/configmap access. No delete.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-namespace-bootstrap
+  namespace: openshift-gitops
+  annotations:
+    ops.haist.farm/issue: "OPS-883/OPS-1107"
+    ops.haist.farm/purpose: "CI apply-namespaces job credential — namespace bootstrap only"

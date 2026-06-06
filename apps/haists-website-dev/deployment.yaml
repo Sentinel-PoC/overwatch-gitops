@@ -1,0 +1,99 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haists-website-dev
+  namespace: haists-website-dev
+  labels:
+    app.kubernetes.io/name: haists-website-dev
+    app.kubernetes.io/instance: haists-website-dev
+    app.kubernetes.io/component: website
+    environment: dev
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haists-website-dev
+      app.kubernetes.io/instance: haists-website-dev
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: haists-website-dev
+        app.kubernetes.io/instance: haists-website-dev
+        app.kubernetes.io/component: website
+        environment: dev
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: haists-website-dev
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: haists-website-dev
+          image: harbor.208.haist.farm/sentinel/haists-website@sha256:21da8db84038ec9908817c265b8b0c97f6c9971f7e6c66cc0074adc85b7ac908
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: haists-website-dev-credentials
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haists-website-dev
+  namespace: haists-website-dev
+  labels:
+    app.kubernetes.io/name: haists-website-dev
+    app.kubernetes.io/instance: haists-website-dev
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: haists-website-dev
+    app.kubernetes.io/instance: haists-website-dev

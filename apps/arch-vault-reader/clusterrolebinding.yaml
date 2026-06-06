@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: arch-vault-reader-view
+  # OPS-271 — binds built-in `view` ClusterRole for read-only inventory
+  # of NetworkPolicy, Istio AuthzPolicy+PeerAuth, Certificates,
+  # VirtualService, IngressRoute, etc. View does NOT include Secrets.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: arch-vault-reader
+    namespace: openshift-gitops

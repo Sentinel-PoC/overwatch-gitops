@@ -1,0 +1,130 @@
+---
+# OPS-182 — Langfuse API health alerts
+#
+# Root cause: 2026-04-23 Langfuse postgres PVC was reinitialized. All API keys were
+# invalidated server-side while Vault-stored keys remained syntactically valid. Claude
+# Code hooks sent ~195 401/hour for 6 days with ZERO alerting. Zero traces ingested.
+#
+# Gap addressed: no alert on langfuse-web 4xx response rate (catches 401 auth rejections),
+# and no alert on trace-ingestion volume drop-off.
+#
+# Metric source: haproxy_backend_http_responses_total
+#   Exposed by the OKD ingress router (openshift-ingress pod, scraped by cluster Prometheus
+#   in openshift-monitoring). Labels: {route, exported_namespace, exported_service, code}.
+#   code is bucketed: "1xx","2xx","3xx","4xx","5xx","other".
+#   route="langfuse" maps to the OpenShift Route in the langfuse namespace (route.yaml).
+#
+# Threshold rationale:
+#   LangfuseHighAuthFailureRate:
+#     Incident rate: ~195 401/hr = ~3.25/min. Threshold 5/min is above transient 4xx
+#     noise (user typos, crawlers) but below sustained-rejection pattern. for:5m avoids
+#     one-off blips triggering pages. scope: ALL 4xx (401+403+404+...) from the langfuse
+#     backend; a sustained spike of ANY 4xx warrants investigation.
+#   LangfuseIngestionSilenced:
+#     Langfuse ingests traces 24x7 while Claude Code agents are active. A 2-hour window
+#     of zero total HTTP responses from the langfuse backend indicates either the service
+#     is unreachable or all requests are being rejected before a valid HTTP response is
+#     returned. for:2h is generous enough to cover planned maintenance windows.
+#     NOTE: this alert is a proxy for "no traffic at all" — it fires if the route has
+#     zero responses (any code) for 2h, not specifically zero 2xx. This is stricter than
+#     the original request but avoids needing a 24h baseline (which requires 24h+ of data
+#     before the alert can evaluate at all, making it useless at cluster start).
+#
+# NIST controls: AU-6 (audit review/analysis), IA-5 (authenticator management).
+#
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: langfuse-api-alerts
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/name: langfuse-api-alerts
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-182
+spec:
+  groups:
+    - name: langfuse.api
+      interval: 1m
+      rules:
+
+        # LangfuseHighAuthFailureRate — fires when the langfuse-web backend sustains
+        # an elevated 4xx response rate for 5 minutes.
+        # Root cause: OPS-182 — 195 401/hr for 6 days, no alert fired.
+        # Threshold: > 5/min (= 0.0833/s) for 5 consecutive minutes.
+        # The rate() window of 5m matches the for: duration — a spike shorter than
+        # 5m does not fire; a sustained elevated rate does.
+        - alert: LangfuseHighAuthFailureRate
+          expr: |
+            rate(
+              haproxy_backend_http_responses_total{
+                route="langfuse",
+                code="4xx"
+              }[5m]
+            ) * 60 > 5
+          for: 5m
+          labels:
+            severity: warning
+            team: ops
+            service: langfuse
+          annotations:
+            summary: >-
+              Langfuse backend elevated 4xx rate ({{ $value | printf "%.1f" }}/min)
+            description: >-
+              The langfuse-web backend is returning more than 5 four-hundred-class
+              HTTP responses per minute, sustained for 5+ minutes.
+              Root cause for this alert: OPS-182 — a postgres PVC reinit invalidated
+              all Langfuse API keys, causing ~195 401-rejections/hour for 6 days
+              undetected. A sustained 4xx spike may indicate stale API keys, a
+              config regression, or a user-facing auth breakage.
+              Immediate actions:
+              (1) oc logs -n langfuse -l app=langfuse-web --since=15m | grep -E "4[0-9]{2}";
+              (2) curl -s -o /dev/null -w "%{http_code}" https://langfuse.208.haist.farm/api/health;
+              (3) Check Vault secret/langfuse/overwatch-agents for key validity;
+              (4) If 401 pattern: check if project/org still exists in Langfuse UI.
+              Threshold: > 5/min for 5m (incident rate was ~3.25/min for 6 days).
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/3b15de37-1bcc-4fee-85f3-288f6bc1c8f3
+
+        # LangfuseIngestionSilenced — fires when the langfuse-web OKD route has
+        # received zero HTTP responses (any code) for 2 consecutive hours.
+        # This is a proxy for "Langfuse is not receiving any traffic at all" — which
+        # covers both the case where clients cannot connect AND the case where all
+        # requests are rejected before a valid response (haproxy_backend_http_responses_total
+        # counts only responses with valid HTTP status codes, NOT TCP-rejected connections).
+        #
+        # Design note: the 24h baseline approach (alert if 2xx drops >80% from baseline)
+        # requires 24h+ of data at cluster start before the rule can evaluate, making it
+        # useless for a fresh cluster or after a Prometheus restart. The zero-traffic proxy
+        # is simpler, more robust, and catches the OPS-182 failure mode: clients were
+        # connecting (TCP ok) but receiving 401s, so haproxy_backend_http_responses_total
+        # was non-zero with code="4xx". LangfuseIngestionSilenced would NOT fire during
+        # OPS-182 (traffic was present, just 401), but LangfuseHighAuthFailureRate WOULD.
+        # Together they cover both: (a) auth rejection while connected, (b) zero traffic.
+        - alert: LangfuseIngestionSilenced
+          expr: |
+            sum(
+              increase(
+                haproxy_backend_http_responses_total{route="langfuse"}[2h]
+              )
+            ) == 0
+          for: 2h
+          labels:
+            severity: warning
+            team: ops
+            service: langfuse
+          annotations:
+            summary: >-
+              Langfuse backend has received zero HTTP responses in the last 2 hours
+            description: >-
+              The langfuse-web OKD Route has not generated any HTTP responses (any status code)
+              for 2+ hours. This indicates Langfuse is receiving no traffic at all —
+              either the route is unreachable, the service is down, or all connections
+              are being refused before a valid HTTP response is returned.
+              Note: if the 4xx alert (LangfuseHighAuthFailureRate) is also firing,
+              prefer investigating that first — clients may be sending traffic that
+              is being 401-rejected (both alerts can co-exist).
+              Immediate actions:
+              (1) oc get pods -n langfuse;
+              (2) curl -sv https://langfuse.208.haist.farm/api/health;
+              (3) oc get route langfuse -n langfuse;
+              (4) oc get svc langfuse-web -n langfuse.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/3b15de37-1bcc-4fee-85f3-288f6bc1c8f3

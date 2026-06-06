@@ -1,0 +1,40 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 99-master-iscsi-session-watchdog
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - path: /usr/local/bin/iscsi-session-watchdog
+          mode: 0755
+          overwrite: true
+          contents:
+            # iscsi-session-watchdog: polls iscsiadm every 30s; reconnects dropped
+            # sessions before the 115s XFS journal flush timeout triggers
+            # XFS_SHUTDOWN_LOG_IO_ERROR.  Max 3 auto-reconnects/hour before
+            # throttling and emitting an ALERT to the journal (Loki/Wazuh pickup).
+            source: "data:text/plain;charset=utf-8;base64,IyEvYmluL2Jhc2gKIyBpc2NzaS1zZXNzaW9uLXdhdGNoZG9nIOKAlCByZWNvbm5lY3QgZHJvcHBlZCBpU0NTSSBzZXNzaW9ucyBiZWZvcmUgWEZTIGpvdXJuYWwgdGltZW91dAojIFBvbGwgaW50ZXJ2YWw6IDMwcyAoWEZTIGpvdXJuYWwgZ2l2ZXMgdXAgYXQgMTE1czsgdGhpcyB3aW5zIHdpdGggPjJ4IG1hcmdpbikKIyBUaHJvdHRsZTogbWF4IDMgYXV0by1yZWNvbm5lY3RzIHBlciByb2xsaW5nIGhvdXIgdG8gYXZvaWQgbWFza2luZyBwZXJzaXN0ZW50IGZhaWx1cmVzCgpJTlRFUlZBTD0zMApNQVhfUkVDT05ORUNUU19QRVJfSE9VUj0zCklTQ1NJQURNPS91c3Ivc2Jpbi9pc2NzaWFkbQoKcmVjb25uZWN0X2NvdW50PTAKd2luZG93X3N0YXJ0PSQoZGF0ZSArJXMpCgpsb2dnZXIgLXQgaXNjc2ktd2F0Y2hkb2cgIndhdGNoZG9nIHN0YXJ0aW5nIChpbnRlcnZhbD0ke0lOVEVSVkFMfXMsIG1heF9yZWNvbm5lY3RzX3Blcl9ob3VyPSR7TUFYX1JFQ09OTkVDVFNfUEVSX0hPVVJ9KSIKCndoaWxlIHRydWU7IGRvCiAgICBzbGVlcCAiJHtJTlRFUlZBTH0iCgogICAgIyBSZXNldCBob3VybHkgcmVjb25uZWN0IGNvdW50ZXIKICAgIG5vdz0kKGRhdGUgKyVzKQogICAgZWxhcHNlZD0kKCggbm93IC0gd2luZG93X3N0YXJ0ICkpCiAgICBpZiBbICIke2VsYXBzZWR9IiAtZ2UgMzYwMCBdOyB0aGVuCiAgICAgICAgcmVjb25uZWN0X2NvdW50PTAKICAgICAgICB3aW5kb3dfc3RhcnQ9JHtub3d9CiAgICBmaQoKICAgICMgQ291bnQgY29uZmlndXJlZCBpU0NTSSBub2RlcyBhbmQgYWN0aXZlIHNlc3Npb25zCiAgICBub2RlX2NvdW50PSQoJHtJU0NTSUFETX0gLW0gbm9kZSAyPi9kZXYvbnVsbCB8IHdjIC1sKQogICAgc2Vzc2lvbl9jb3VudD0kKCR7SVNDU0lBRE19IC1tIHNlc3Npb24gMj4vZGV2L251bGwgfCB3YyAtbCkKCiAgICAjIE5vdGhpbmcgY29uZmlndXJlZCDigJQgbm90aGluZyB0byB3YXRjaAogICAgWyAiJHtub2RlX2NvdW50fSIgLWVxIDAgXSAmJiBjb250aW51ZQoKICAgICMgQWxsIHNlc3Npb25zIGhlYWx0aHkg4oCUIG5vdGhpbmcgdG8gZG8KICAgIFsgIiR7c2Vzc2lvbl9jb3VudH0iIC1nZSAiJHtub2RlX2NvdW50fSIgXSAmJiBjb250aW51ZQoKICAgICMgRHJvcHBlZCBzZXNzaW9uIGRldGVjdGVkCiAgICBsb2dnZXIgLXQgaXNjc2ktd2F0Y2hkb2cgImRyb3BwZWQgc2Vzc2lvbiBkZXRlY3RlZCAoc2Vzc2lvbnM9JHtzZXNzaW9uX2NvdW50fSBub2Rlcz0ke25vZGVfY291bnR9KSIKCiAgICAjIFRocm90dGxlIGd1YXJkCiAgICBpZiBbICIke3JlY29ubmVjdF9jb3VudH0iIC1nZSAiJHtNQVhfUkVDT05ORUNUU19QRVJfSE9VUn0iIF07IHRoZW4KICAgICAgICBsb2dnZXIgLXQgaXNjc2ktd2F0Y2hkb2cgIkFMRVJUOiB0aHJvdHRsZSBhY3RpdmUgKCR7cmVjb25uZWN0X2NvdW50fSByZWNvbm5lY3RzIHRoaXMgaG91cikg4oCUIG1hbnVhbCBpbnRlcnZlbnRpb24gcmVxdWlyZWQiCiAgICAgICAgY29udGludWUKICAgIGZpCgogICAgcmVjb25uZWN0X2F0dGVtcHQ9JCgoIHJlY29ubmVjdF9jb3VudCArIDEgKSkKICAgIGxvZ2dlciAtdCBpc2NzaS13YXRjaGRvZyAiYXR0ZW1wdGluZyByZWNvbm5lY3QgJHtyZWNvbm5lY3RfYXR0ZW1wdH0vJHtNQVhfUkVDT05ORUNUU19QRVJfSE9VUn0iCgogICAgIyBBdHRlbXB0IHRvIGxvZyBpbiBhbGwgY29uZmlndXJlZCBub2RlcyAobm8tb3AgZm9yIHNlc3Npb25zIGFscmVhZHkgdXApCiAgICAke0lTQ1NJQURNfSAtbSBub2RlIC0tbG9naW4gMj4mMSB8IGxvZ2dlciAtdCBpc2NzaS13YXRjaGRvZwoKICAgIHJlY29ubmVjdF9jb3VudD0ke3JlY29ubmVjdF9hdHRlbXB0fQoKICAgIG5ld19zZXNzaW9uX2NvdW50PSQoJHtJU0NTSUFETX0gLW0gc2Vzc2lvbiAyPi9kZXYvbnVsbCB8IHdjIC1sKQogICAgbG9nZ2VyIC10IGlzY3NpLXdhdGNoZG9nICJyZWNvbm5lY3QgYXR0ZW1wdCBjb21wbGV0ZSAoc2Vzc2lvbnMgbm93PSR7bmV3X3Nlc3Npb25fY291bnR9KSIKZG9uZQo="
+    systemd:
+      units:
+        - name: iscsi-session-watchdog.service
+          enabled: true
+          contents: |
+            [Unit]
+            Description=iSCSI session watchdog — auto-reconnect dropped sessions
+            Documentation=https://plane.208.haist.farm (OPS-165)
+            After=iscsid.service network-online.target
+            Wants=network-online.target iscsid.service
+
+            [Service]
+            Type=simple
+            ExecStart=/usr/local/bin/iscsi-session-watchdog
+            Restart=always
+            RestartSec=10
+
+            [Install]
+            WantedBy=multi-user.target

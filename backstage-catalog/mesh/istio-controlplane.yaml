@@ -1,0 +1,22 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: istio-controlplane
+  description: Istio service mesh control plane (v1.28.3) via SAIL operator
+  annotations:
+    backstage.io/kubernetes-label-selector: app=istiod
+    backstage.io/kubernetes-namespace: istio-system
+    argocd/app-name: istio-controlplane
+  tags:
+    - service-mesh
+    - istio
+    - networking
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:sail-operator

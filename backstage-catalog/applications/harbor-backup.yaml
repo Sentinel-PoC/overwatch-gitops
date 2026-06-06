@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: harbor-backup
+  description: Harbor registry backup CronJob — schedules periodic database and artifact exports to S3/MinIO
+  annotations:
+    backstage.io/kubernetes-namespace: harbor-backup
+    argocd/app-name: harbor-backup
+  tags:
+    - backup
+    - harbor
+    - operations
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:harbor

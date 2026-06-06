@@ -1,0 +1,226 @@
+# OPS-751: NetworkPolicy default-deny baseline for istio-ingress namespace.
+# Child issue of OPS-747 (deferred from OPS-517 Phase 1b, 2026-05-18).
+#
+# ARCHITECTURE — istio-ingress traffic flow (Overwatch platform):
+#
+# External users → Cloudflare/Pangolin (208.haist.farm)
+#                → Traefik (TLS termination at 192.168.12.168)
+#                → OCP HAProxy Router (openshift-ingress ns)
+#                → istio IngressGateway :8080 (HTTP, TLS already terminated)
+#                → mTLS → backend service pods
+#
+# Key: the Gateway listens on port 8080, NOT 443/80.
+# Confirmed: apps/mesh-config/gateway.yaml — sentinel-gateway port 8080/HTTP
+# with hosts: *.208.haist.farm, www.haist.farm, cfwc.haist.farm
+#
+# Pods in scope:
+#   - istio-ingressgateway (label: istio: ingressgateway)
+#     Ports: 8080 (HTTP app traffic), 15021 (health), 15090 (Prometheus metrics)
+#     PDB: apps/mesh-config/istio-ingressgateway-pdb.yaml (2 replicas, minAvailable: 1)
+#
+# Traffic requirements:
+#   Ingress:
+#     - OCP HAProxy Router (openshift-ingress ns) → :8080 (all external service traffic)
+#     - Any pod/kubelet health checks → :15021 (Kubernetes liveness/readiness probes)
+#     - Prometheus (monitoring ns) → :15090 (metrics scraping)
+#   Egress:
+#     - DNS (all ns)
+#     - istiod in istio-system → ports 15010,15012,15014 (xDS config feed)
+#     - kube-API → port 6443 (Envoy reads Kubernetes service/endpoint discovery)
+#     - Backend services in ALL namespaces (gateway proxies to any mesh service)
+#       NOTE: this broad egress is intentional — restricting gateway → backend
+#       connectivity would require per-service allow rules updated on every new
+#       service deployment, making the policy unmanageable. The ingress side
+#       provides the meaningful restriction.
+#
+# NIST: SC-7, SC-7(5), AC-4
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution for all pods in namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow ingress from OCP HAProxy Router on gateway app port (8080)
+# Traffic path: Traefik (TLS) → HAProxy (openshift-ingress ns) → gateway :8080
+# This is the sole external traffic entry point for all *.208.haist.farm services.
+# OKD standard router namespace label (confirmed live 2026-05-18 via plane NP).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      istio: ingressgateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# Allow health check ingress on port 15021 from any source
+# Consumers: Kubernetes liveness/readiness probes (kubelet — bypasses NP in OVN-K
+# but explicit rule aids visibility), other namespace pods (e.g. backstage egress
+# to istio-ingress:15021 per apps/backstage/network-policies.yaml).
+# Using open source (any ns) because health checks originate from kubelet and
+# multiple service-mesh-member namespaces.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-health-ingress
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      istio: ingressgateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 15021
+          protocol: TCP
+---
+# Allow Prometheus metrics scrape on port 15090
+# Prometheus in monitoring namespace (network.openshift.io/policy-group: monitoring)
+# scrapes Envoy gateway metrics via :15090.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      istio: ingressgateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: monitoring
+      ports:
+        - port: 15090
+          protocol: TCP
+        - port: 15020
+          protocol: TCP
+---
+# Allow egress to istiod (Pilot) in istio-system for xDS config
+# Ports: 15010 (gRPC/plain), 15012 (gRPC/mTLS), 15014 (control-plane metrics)
+# The gateway Envoy proxy connects to istiod at startup and on every config change.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-istiod-egress
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      istio: ingressgateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - port: 15010
+          protocol: TCP
+        - port: 15012
+          protocol: TCP
+        - port: 15014
+          protocol: TCP
+---
+# Allow egress to Kubernetes API server (port 6443)
+# Envoy gateway reads Service + Endpoint objects for service discovery.
+# OKD canonical pattern — port 6443 only, no destination restriction.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6443
+          protocol: TCP
+---
+# Allow egress to backend services in all namespaces (any port)
+# The ingress gateway proxies requests to mesh services: backstage, defectdojo,
+# harbor, keycloak, monitoring, netbox, cfwc-website, haists-website, etc.
+# These are reached via their Envoy upstream routes (service cluster IPs or
+# pod IPs on the application port). Restricting to specific namespaces and
+# ports would require a per-service allow rule updated on every new service
+# deployment — impractical for an ingress gateway. The ingress side (allow-gateway-ingress)
+# provides the meaningful security boundary.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-egress
+  namespace: istio-ingress
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      istio: ingressgateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}

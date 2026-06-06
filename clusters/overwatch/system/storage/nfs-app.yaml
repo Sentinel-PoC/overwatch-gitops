@@ -1,0 +1,51 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nfs-provisioner
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    chart: nfs-subdir-external-provisioner
+    repoURL: harbor.208.haist.farm/sentinel
+    targetRevision: 4.0.18
+    helm:
+      parameters:
+      - name: nfs.server
+        value: 192.168.30.205
+      - name: nfs.path
+        value: /mnt/DATA/data
+      - name: storageClass.create
+        value: "false"
+      - name: rbac.create
+        value: "false"
+      valuesObject:
+        nfs:
+          mountOptions:
+          - vers=4.1
+          - hard
+          - nointr
+          - timeo=600
+        # OPS-1182: the chart's pod-template-labels helper reads .Values.labels
+        # (NOT .Values.podLabels — verified in _helpers.tpl) — genuine
+        # app.kubernetes.io/name label for require-labels Enforce.
+        labels:
+          app.kubernetes.io/name: nfs-subdir-external-provisioner
+        podAnnotations:
+          sidecar.istio.io/inject: "false"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nfs-provisioner
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

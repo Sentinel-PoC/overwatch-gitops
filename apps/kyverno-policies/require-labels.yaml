@@ -1,0 +1,47 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-labels
+  annotations:
+    policies.kyverno.io/title: Require Labels
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      All pods must have the app.kubernetes.io/name label for inventory
+      and asset management. Maps to NIST 800-53 control CM-8.
+spec:
+  # OPS-1182 (2026-06-05): flipped Audit->Enforce. nfs podLabels added; plane chart
+  # workloads exempt via plane-chart-hygiene-exception (immutable-selector reality);
+  # sentinel-ops CronJobs emit labeled jobs. Verified FAIL=0 for new admissions.
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-app-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - backstage
+                - defectdojo
+                - demo
+                - harbor
+                - haists-website
+                - homepage
+                - keycloak
+                - matrix
+                - media
+                - monitoring
+                - netbox
+                - nfs-provisioner
+                - overwatch-console
+                - pangolin-internal
+                - plane
+                - sentinel-ops
+      validate:
+        message: "The label 'app.kubernetes.io/name' is required."
+        pattern:
+          metadata:
+            labels:
+              app.kubernetes.io/name: "?*"

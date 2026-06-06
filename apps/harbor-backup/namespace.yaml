@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: harbor-backup
+  labels:
+    # Isolated from harbor namespace intentionally (OPS-481 Phase 2):
+    # a harbor namespace wipe cannot take out backup tooling.
+    app.kubernetes.io/part-of: harbor-backup
+    istio-injection: disabled

@@ -1,0 +1,133 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-checker
+  namespace: health-monitoring
+  labels:
+    app.kubernetes.io/name: health-checker
+    app.kubernetes.io/instance: health-checker
+    app.kubernetes.io/component: monitoring
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: health-checker
+      app.kubernetes.io/instance: health-checker
+  template:
+    metadata:
+      annotations:
+        configmap.reloader.stakater.com/reload: "health-checker-scripts"
+      labels:
+        app.kubernetes.io/name: health-checker
+        app.kubernetes.io/instance: health-checker
+        app.kubernetes.io/component: monitoring
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: health-checker
+          image: harbor.208.haist.farm/sentinel/sentinel-ops@sha256:6e6e95aab482e99fdd0e4dafcdbabe9914c0ba8371799335052269a225d05fc6
+          command: ["python3", "-u", "/opt/health-checker/health_checker.py"]
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: NTFY_URL
+              value: "http://ntfy.health-monitoring.svc:8080"
+            - name: NTFY_TOPIC
+              value: "sentinel-health"
+            - name: CHECK_INTERVAL_SECONDS
+              value: "900"
+            - name: DEDUP_INTERVAL_SECONDS
+              value: "3600"
+            - name: HTTP_TIMEOUT
+              value: "10"
+            - name: HEALTH_PORT
+              value: "8081"
+            - name: STARTUP_DELAY
+              value: "60"
+            - name: FAIL_THRESHOLD
+              value: "2"
+            - name: MATRIX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: health-checker-matrix
+                  key: MATRIX_TOKEN
+            - name: MATRIX_ROOM_ID
+              valueFrom:
+                secretKeyRef:
+                  name: health-checker-matrix
+                  key: MATRIX_ROOM_ID
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/health-checker
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            periodSeconds: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            periodSeconds: 60
+      volumes:
+        - name: scripts
+          configMap:
+            name: health-checker-scripts
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-checker
+  namespace: health-monitoring
+  labels:
+    app.kubernetes.io/name: health-checker
+    app.kubernetes.io/instance: health-checker
+spec:
+  type: ClusterIP
+  ports:
+    - name: health
+      port: 8081
+      targetPort: 8081
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: health-checker
+    app.kubernetes.io/instance: health-checker

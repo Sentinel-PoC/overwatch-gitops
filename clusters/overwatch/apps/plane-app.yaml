@@ -1,0 +1,160 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plane
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+  # OPS-1186: chart mirrored to Harbor OCI; pulled internally (SEC-85 egress stays locked).
+  - repoURL: harbor.208.haist.farm/sentinel
+    chart: plane-ce
+    targetRevision: 1.4.1
+    helm:
+      releaseName: plane
+      valueFiles:
+      - $values/clusters/overwatch/apps/plane/values.yaml
+  - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    ref: values
+  - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/plane
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: plane
+  ignoreDifferences:
+  - kind: PersistentVolumeClaim
+    jqPathExpressions:
+    - .spec.resources.requests.storage
+    - .spec.storageClassName
+    - .spec.volumeName
+    - .spec.selector
+  - group: external-secrets.io
+    kind: ExternalSecret
+    jqPathExpressions:
+    - .spec.data[]?.remoteRef
+    - .spec.target
+  - group: apps
+    kind: Deployment
+    name: plane-admin-wl
+    jqPathExpressions:
+    - .spec.selector
+    - .spec.template.metadata.labels
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+  - group: apps
+    kind: Deployment
+    name: plane-api-wl
+    jqPathExpressions:
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+    - .spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+  - group: apps
+    kind: Deployment
+    name: plane-beat-worker-wl
+    jqPathExpressions:
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+  - group: apps
+    kind: Deployment
+    name: plane-live-wl
+    jqPathExpressions:
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+  - group: apps
+    kind: Deployment
+    name: plane-space-wl
+    jqPathExpressions:
+    - .spec.selector
+    - .spec.template.metadata.labels
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+  - group: apps
+    kind: Deployment
+    name: plane-web-wl
+    jqPathExpressions:
+    - .spec.selector
+    - .spec.template.metadata.labels
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+  - group: apps
+    kind: Deployment
+    name: plane-worker-wl
+    jqPathExpressions:
+    - .spec.template.spec.volumes
+    - .spec.template.spec.containers[].volumeMounts
+    - .spec.template.spec.containers[].envFrom
+  # OPS-822 / OPS-785: StatefulSets plane-minio-wl, plane-rabbitmq-wl, plane-redis-wl
+  # are in a sync-fail loop because the plane-ce 1.4.1 Helm chart renders
+  #   spec.selector.matchLabels.app.name: default-plane-{minio,rabbitmq,redis}
+  # but the live StatefulSets (created when the release used "plane-" prefix) have
+  #   spec.selector.matchLabels.app.name: plane-plane-{minio,rabbitmq,redis}
+  # spec.selector is immutable; Kubernetes rejects every sync attempt with:
+  #   "spec: Forbidden: updates to statefulset spec for fields other than ..."
+  # RespectIgnoreDifferences=true (set in syncOptions) causes ArgoCD to exclude
+  # these fields from the apply payload, preventing the K8s rejection.
+  # spec.template.metadata.labels ignored for same reason (app.name label drifts
+  # between default-/plane- prefix; SSA patches in apps/plane/ previously owned
+  # those labels but were removed in OPS-785 2026-05-22 — K8s 1.34 SSA cannot
+  # modify StatefulSet spec.template fields for existing StatefulSets: the API
+  # requires spec.selector in the payload (Required value) but simultaneously
+  # forbids updating it (immutable field Forbidden). This is a K8s SSA limitation
+  # confirmed via kubectl apply --server-side --dry-run=server with all combinations.
+  # The plane-chart-hygiene-exception Kyverno PolicyException (active in kyverno ns)
+  # provides Kyverno protection for these workloads as interim coverage.
+  # Follow-up: OPS-858 will add labels+limits via Kyverno mutation policy or hook.
+  # spec.volumeClaimTemplates[].metadata and storageClassName ignored defensively
+  # (mirrors existing PVC ignoreDifferences pattern; VCT spec is immutable in K8s).
+  - group: apps
+    kind: StatefulSet
+    name: plane-minio-wl
+    jqPathExpressions:
+    - .spec.selector
+    - .spec.template.metadata.labels
+    - .spec.volumeClaimTemplates[].metadata
+    - .spec.volumeClaimTemplates[].spec.storageClassName
+  - group: apps
+    kind: StatefulSet
+    name: plane-rabbitmq-wl
+    jqPathExpressions:
+    - .spec.selector
+    - .spec.template.metadata.labels
+    - .spec.volumeClaimTemplates[].metadata
+    - .spec.volumeClaimTemplates[].spec.storageClassName
+  - group: apps
+    kind: StatefulSet
+    name: plane-redis-wl
+    jqPathExpressions:
+    - .spec.selector
+    - .spec.template.metadata.labels
+    - .spec.volumeClaimTemplates[].metadata
+    - .spec.volumeClaimTemplates[].spec.storageClassName
+  - group: batch
+    kind: Job
+    jqPathExpressions:
+    - .spec.template
+  - kind: ConfigMap
+    name: plane-app-vars
+    jqPathExpressions:
+    - .data.WEB_URL
+    - .data.CORS_ALLOWED_ORIGINS
+  syncPolicy:
+    # OPS-785: autoSync re-enabled after SSA patch fix (OPS-785 2026-05-20).
+    # Root cause of prior disable (OPS-768): 3 security patches (beat-worker, live,
+    # worker) were missing the container image field, causing K8s API validation
+    # errors on every sync attempt. Fixed by adding image+imagePullPolicy to each
+    # patch. argocd app diff --core confirmed EXIT 0 (no real diffs remain).
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+    - RespectIgnoreDifferences=true

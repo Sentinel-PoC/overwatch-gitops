@@ -1,0 +1,103 @@
+---
+# Ingress-facing VirtualService. External traffic arrives at
+# istio-ingressgateway with authority "harbor.208.haist.farm" and is
+# forwarded to the harbor nginx service (port 80 -> nginx 8080).
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: harbor
+  namespace: harbor
+spec:
+  hosts:
+    - harbor.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: harbor.harbor.svc.cluster.local
+            port:
+              number: 80
+---
+# OPS-210: register the external hostname "harbor.208.haist.farm" as a
+# MESH_INTERNAL ServiceEntry so sidecars recognize it as a known mesh
+# destination on ports 80 and 5000.
+#
+# Background: the mesh is configured with
+# outboundTrafficPolicy=REGISTRY_ONLY. Requests leaving a meshed pod
+# with authority "harbor.208.haist.farm" had no match in the mesh
+# service registry and fell through to a catch-all `block_all` virtual
+# host that returns `direct_response 502` on every port.
+#
+# The problem surfaced as /v2/ returning 502 externally at
+# 2026-04-18T00:29Z, triggered by the mesh reconciliation at
+# 2026-04-18T00:28:49Z and the harbor-core rolling restart 39s later.
+# Two request paths both carried the external authority into the mesh:
+#
+#   1. harbor-nginx `location /v2/` forwards `Host $http_host` (unlike
+#      other locations which use `$host`). So nginx proxied the
+#      request to http://core/ with authority = harbor.208.haist.farm.
+#      The nginx sidecar had no mesh route for that authority on
+#      port 80 -> 502 (block_all direct_response).
+#
+#   2. Once (1) is fixed, harbor-core internally proxies deeper
+#      /v2/sentinel/.../manifests/... requests to harbor-registry on
+#      port 5000 while preserving the incoming Host header. Core's
+#      sidecar also needs a mesh route for authority
+#      "harbor.208.haist.farm" on port 5000.
+#
+# Fix: (a) declare the hostname with both ports via this ServiceEntry
+# so the mesh registry knows it; (b) add a mesh-scoped VirtualService
+# below that routes port 80 traffic to harbor-core and port 5000
+# traffic to harbor-registry. Routing port 80 to core (rather than
+# the harbor nginx service) is deliberate: routing to the nginx
+# service creates a request loop because nginx re-proxies to core
+# with the same external authority, and the retry count manifested as
+# a 503 with a long upstream_service_time during testing.
+#
+# Scope: apps/harbor only. No change to mesh-config, istio-controlplane,
+# or any Istio CR.
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: harbor-external-alias
+  namespace: harbor
+spec:
+  hosts:
+    - harbor.208.haist.farm
+  location: MESH_INTERNAL
+  resolution: NONE
+  ports:
+    - number: 80
+      name: http
+      protocol: HTTP
+    - number: 5000
+      name: http-registry
+      protocol: HTTP
+---
+# Mesh-internal VirtualService. Routes port 5000 -> harbor-registry,
+# all other traffic (port 80) -> harbor-core. See the ServiceEntry
+# above for the full rationale.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: harbor-mesh-internal
+  namespace: harbor
+spec:
+  hosts:
+    - harbor.208.haist.farm
+  gateways:
+    - mesh
+  http:
+    - match:
+        - port: 5000
+      route:
+        - destination:
+            host: harbor-registry.harbor.svc.cluster.local
+            port:
+              number: 5000
+    - route:
+        - destination:
+            host: harbor-core.harbor.svc.cluster.local
+            port:
+              number: 80

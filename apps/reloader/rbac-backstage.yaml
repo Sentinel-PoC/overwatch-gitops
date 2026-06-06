@@ -1,0 +1,34 @@
+---
+# OPS-666: Backstage namespace per-namespace RBAC for Reloader.
+# Following SEC-58 pattern: cluster-scope secrets access removed from ClusterRole,
+# replaced with namespace-scoped Roles where reloader annotations are active.
+# Backstage deployment uses: secret.reloader.stakater.com/reload=backstage-credentials
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reloader-secret-watcher
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reloader-secret-watcher
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: reloader
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: reloader-secret-watcher
+subjects:
+  - kind: ServiceAccount
+    name: reloader
+    namespace: reloader

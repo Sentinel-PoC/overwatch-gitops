@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: langfuse-postgresql
+  namespace: langfuse
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: langfuse
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: langfuse

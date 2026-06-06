@@ -1,0 +1,34 @@
+---
+# All external services route through Pangolin/Traefik (192.168.12.168:443)
+# which is allowed by iac-control's FORWARD chain on port 443.
+# Hostname-based TLS routing lets Envoy pass through the correct SNI.
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: pangolin-services
+  namespace: overwatch-console
+spec:
+  hosts:
+    - pve.208.haist.farm
+    - pve2.208.haist.farm
+    - pve3.208.haist.farm
+    - wazuh-api.208.haist.farm
+    - vault.208.haist.farm
+    - argocd.208.haist.farm
+    - auth.208.haist.farm
+    - auth-next.208.haist.farm
+    - crowdsec-api.208.haist.farm
+    - wazuh-indexer.208.haist.farm
+    - forgejo.208.haist.farm
+  addresses:
+    - 192.168.12.168
+  ports:
+    - number: 443
+      name: tls
+      protocol: TLS
+  location: MESH_EXTERNAL
+  resolution: STATIC
+  endpoints:
+    - address: 192.168.12.168
+# Forgejo is accessed via https://forgejo.208.haist.farm (Pangolin at 192.168.12.168:443)
+# and is included in the pangolin-services ServiceEntry above.

@@ -1,0 +1,60 @@
+---
+# OPS-1147 — Fix kyverno-background-controller RBAC for plane-statefulset-hygiene-mutate
+#
+# The plane-statefulset-hygiene-mutate ClusterPolicy uses mutateExisting
+# targeting apps/v1 StatefulSets in the plane namespace. When ArgoCD attempts
+# to sync this ClusterPolicy, the validate-policy.kyverno.svc admission webhook
+# checks that the kyverno-background-controller SA has the required permissions
+# on the target resource before allowing the ClusterPolicy to be created.
+#
+# Error observed: "system:serviceaccount:kyverno:kyverno-background-controller
+# requires permissions update for resource apps/v1/StatefulSet in namespace plane"
+#
+# Fix: grant least-privilege verbs (get, list, watch, update, patch) on
+# apps/statefulsets scoped to the plane namespace only. This matches the
+# narrowest possible scope — the background-controller only needs this access
+# because its mutateExisting targets are all within the plane namespace.
+#
+# Pattern: matches reloader/rbac-overwatch-console.yaml cross-namespace RBAC precedent.
+# Related: OPS-858 (design), OPS-880 (execution), OPS-1146 (enforce mode)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno-background-controller-statefulset-mutate
+  namespace: plane
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: background-controller
+    app.kubernetes.io/part-of: kyverno
+    app.kubernetes.io/managed-by: gitops
+  annotations:
+    ops-issue: OPS-1147
+    policies.kyverno.io/description: >-
+      Grants kyverno-background-controller the minimum permissions needed to
+      apply mutateExisting patches to StatefulSets in the plane namespace,
+      as required by the plane-statefulset-hygiene-mutate ClusterPolicy.
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kyverno-background-controller-statefulset-mutate
+  namespace: plane
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: background-controller
+    app.kubernetes.io/part-of: kyverno
+    app.kubernetes.io/managed-by: gitops
+  annotations:
+    ops-issue: OPS-1147
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kyverno-background-controller-statefulset-mutate
+subjects:
+  - kind: ServiceAccount
+    name: kyverno-background-controller
+    namespace: kyverno

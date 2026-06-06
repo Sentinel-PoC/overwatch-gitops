@@ -1,0 +1,24 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: haists-website-dev
+  description: HAIST IT Consulting website — development / staging environment (dev.208.haist.farm)
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=haists-website-dev
+    backstage.io/kubernetes-namespace: haists-website-dev
+    argocd/app-name: haists-website-dev
+  links:
+    - url: https://dev.208.haist.farm
+      title: HAIST Website Dev
+      icon: web
+  tags:
+    - website
+    - development
+    - staging
+    - overwatch
+spec:
+  type: website
+  lifecycle: experimental
+  owner: platform-team
+  system: sentinel-platform

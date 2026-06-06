@@ -1,0 +1,63 @@
+---
+# ServiceAccount for etcd backup CronJob — sandbox cluster.
+# Mirrors prod etcd-backup-sa (apps/sentinel-ops/etcd-backup-rbac.yaml).
+# VAULT_TOKEN bypass active (OPS-289 k8s-auth blocker): SA token used only for
+# k8s API calls to fetch etcd client cert/key + CA bundle from openshift-etcd.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: etcd-backup-sa
+  namespace: sentinel-ops-sandbox
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(8)"
+    compliance.sentinel/description: >
+      Dedicated SA for etcd-backup CronJob on sandbox cluster. VAULT_TOKEN
+      injected from static Secret (OPS-289 bypass — k8s-auth not wired yet).
+      Reads etcd TLS credentials from openshift-etcd via ClusterIP API access.
+---
+# ClusterRole granting read-only get on exactly the two named etcd credentials.
+# Bound via RoleBinding in openshift-etcd — not cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: etcd-backup-etcd-reader
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(8)"
+    compliance.sentinel/description: >
+      Grants get-only access to named etcd credentials in openshift-etcd.
+      Bound by a RoleBinding in openshift-etcd — not cluster-wide.
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["etcd-client"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["etcd-ca-bundle"]
+    verbs: ["get"]
+---
+# RoleBinding in openshift-etcd namespace.
+# Cross-namespace subject: SA in sentinel-ops-sandbox; binding in openshift-etcd.
+# Scopes the ClusterRole grant to openshift-etcd only — not cluster-wide.
+#
+# KUSTOMIZE NOTE: namespace-transformer.yaml uses unsetOnly: true so this
+# RoleBinding's explicit namespace: openshift-etcd is preserved and not
+# overridden to sentinel-ops-sandbox. Same pattern as prod (OPS-249).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: etcd-backup-etcd-reader
+  namespace: openshift-etcd
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(8)"
+    compliance.sentinel/description: >
+      Binds etcd-backup-etcd-reader to etcd-backup-sa (sentinel-ops-sandbox).
+      Intentionally in openshift-etcd to limit scope to that namespace only.
+subjects:
+  - kind: ServiceAccount
+    name: etcd-backup-sa
+    namespace: sentinel-ops-sandbox
+roleRef:
+  kind: ClusterRole
+  name: etcd-backup-etcd-reader
+  apiGroup: rbac.authorization.k8s.io

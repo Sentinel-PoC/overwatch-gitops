@@ -1,0 +1,63 @@
+# OPS-481 Phase 2: NetworkPolicies for harbor-backup namespace.
+# Two egress targets: harbor-database Service (TCP 5432) + MinIO .58 (TCP 9000).
+# kubectl exec NOT used — pg_dump connects directly via TCP.
+# harbor namespace has no default-deny today; if one is added later, an ingress
+# allow on harbor-database from harbor-backup namespace will be needed.
+---
+# Default deny all — defense in depth for the backup namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: harbor-backup
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow egress: PostgreSQL (harbor ns), MinIO (.58), DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-harbor-backup-egress
+  namespace: harbor-backup
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: harbor-backup
+  policyTypes:
+    - Egress
+  egress:
+    # PostgreSQL in harbor namespace (direct TCP — no kubectl exec)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: harbor
+      ports:
+        - port: 5432
+          protocol: TCP
+    # MinIO S3 backup destination (.58)
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP
+    # DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP

@@ -1,0 +1,66 @@
+---
+# OPS-808 — VictoriaLogs NetworkPolicy
+# Default-deny baseline + allow ingress from OKD router + log shippers
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: logging
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-victorialogs
+  namespace: logging
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/name: victorialogs
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: victorialogs
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from OKD Router (for external access via Route)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 9428
+          protocol: TCP
+    # Allow from any in-cluster log shipper (e.g. Promtail, Vector, Fluentbit)
+    # across all namespaces — agents in any namespace can push logs
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: 9428
+          protocol: TCP
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # NFS to TrueNAS (NFS v4.1 uses port 2049)
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.205/32
+      ports:
+        - port: 2049
+          protocol: TCP
+        - port: 2049
+          protocol: UDP

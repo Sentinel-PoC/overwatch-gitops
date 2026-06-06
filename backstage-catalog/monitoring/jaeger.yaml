@@ -1,0 +1,26 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: jaeger
+  description: Distributed tracing backend (all-in-one) for service mesh observability
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=jaeger
+    backstage.io/kubernetes-namespace: observability
+    argocd/app-name: jaeger
+  links:
+    - url: https://jaeger.208.haist.farm
+      title: Jaeger Query UI
+      icon: dashboard
+  tags:
+    - tracing
+    - monitoring
+    - observability
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:istio-controlplane

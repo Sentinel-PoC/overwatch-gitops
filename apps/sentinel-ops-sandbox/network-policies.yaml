@@ -1,0 +1,99 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: sentinel-ops-sandbox
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cronjobs
+  namespace: sentinel-ops-sandbox
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    # Vault API — same Vault instance as prod
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.206/32
+      ports:
+        - port: 8200
+          protocol: TCP
+    # Pangolin VIP (Vault transit/encrypt, plus Harbor and other internal services
+    # accessed via *.208.haist.farm hostnames which resolve to this VIP through
+    # the cluster's DNS forwarder chain).
+    # Equivalent prod rule is in apps/sentinel-ops/network-policies.yaml mislabeled
+    # as "Grafana via Traefik" (OPS-298 surfaced the actual Vault dependency).
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.168/32
+      ports:
+        - port: 443
+          protocol: TCP
+    # MinIO primary — sandbox uses same primary endpoint as prod, different bucket
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP
+    # Kubernetes API — for k8s API calls to fetch etcd client cert/key + CA bundle
+    # sandbox single-network: masters on 192.168.12.220-222 in 192.168.12.0/24 (Judge-278 verified via oc get nodes)
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.0/24
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-etcd-backup-egress
+  namespace: sentinel-ops-sandbox
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: etcd-backup
+  policyTypes:
+    - Egress
+  egress:
+    # Etcd Service access (post-DNAT destination per OVN-K).
+    # OVN-K NP egress evaluates against POST-DNAT destination; etcd port 2379
+    # is not translated (targetPort 2379). Destination is master-node CIDR.
+    # sandbox single-network: masters on 192.168.12.220-222 (Judge-278 verified via oc get nodes).
+    #
+    # OPS-292: Tightened from 192.168.12.0/24 (256 IPs) to 192.168.12.220/30 (4 IPs).
+    # Sandbox master IPs: 192.168.12.220 (master-1), 192.168.12.221 (master-2), 192.168.12.222 (master-3)
+    # per Judge-278 oc get nodes output (OPS-278 Plane comment 2026-05-02T20:51Z).
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.220/30  # Sandbox master-node /30 (post-DNAT) — OPS-292
+      ports:
+        - port: 2379             # etcd Service port = targetPort (no translation)
+          protocol: TCP

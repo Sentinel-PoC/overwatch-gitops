@@ -1,0 +1,22 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: istio-ingress
+  description: Istio ingress gateway — terminates external TLS and routes traffic into the service mesh; hosts the sentinel-gateway for *.208.haist.farm
+  annotations:
+    backstage.io/kubernetes-namespace: istio-ingress
+    argocd/app-name: istio-ingress-netpol
+  tags:
+    - networking
+    - ingress
+    - istio
+    - mesh
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:istio-controlplane

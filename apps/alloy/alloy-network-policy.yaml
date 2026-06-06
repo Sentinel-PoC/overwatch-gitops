@@ -1,0 +1,71 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alloy-egress-victorialogs
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/component: log-shipper
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  policyTypes:
+    - Egress
+    - Ingress
+  egress:
+    # Push logs to VictoriaLogs in the logging namespace
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 9428
+          protocol: TCP
+    # OPS-519: Push traces to Tempo (observability namespace) via OTLP gRPC
+    # and to Jaeger collector gRPC during dual-run migration week.
+    # Remove Jaeger port (14250) after Jaeger decommission.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 4317
+          protocol: TCP
+        - port: 14250
+          protocol: TCP
+    # Kubernetes API (TLS) for discovery.kubernetes and loki.source.kubernetes.
+    # Must use ipBlock — namespaceSelector:{} only matches pod-network pods and
+    # does NOT cover the kubernetes ClusterIP (172.30.0.1) which routes to
+    # host-networked kube-apiserver pods.  Verified 2026-05-27: direct TCP to
+    # 172.30.0.1:443 was blocked, causing 35 failed LIST/WATCH attempts and
+    # zero pod targets discovered.  Promtail policy uses the same ipBlock pattern.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # DNS — required for victorialogs.logging.svc.cluster.local resolution.
+    # CoreDNS ClusterIP (172.30.0.10) is also a non-pod service IP; use
+    # namespaceSelector:{} for in-cluster pods and ipBlock for the ClusterIP.
+    - to:
+        - namespaceSelector: {}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  ingress:
+    # Scrape Alloy metrics
+    - ports:
+        - port: 12345
+          protocol: TCP
+    # OPS-519: Accept OTLP spans from instrumented workloads across all namespaces
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: 4317
+          protocol: TCP
+        - port: 4318
+          protocol: TCP

@@ -1,0 +1,18 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: haists-website
+  namespace: haists-website
+spec:
+  hosts:
+    - www.208.haist.farm
+    - www.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: haists-website.haists-website.svc.cluster.local
+            port:
+              number: 8080

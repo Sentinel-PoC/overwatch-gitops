@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# OPS-808 — VictoriaLogs operational log lane
+# Plain manifests (no Helm); single ArgoCD source.
+# Storage: NFS PV → PVC → Deployment at /victoria-logs-data
+# Ingress: OKD Route (edge TLS) → victorialogs.208.haist.farm
+
+resources:
+  - victorialogs-pv.yaml
+  - victorialogs-pvc.yaml
+  - victorialogs-deployment.yaml
+  - victorialogs-service.yaml
+  - victorialogs-route.yaml
+  - network-policies.yaml

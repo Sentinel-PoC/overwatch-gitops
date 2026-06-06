@@ -1,0 +1,123 @@
+---
+# OPS-655: Manual workflow_dispatch to cosign-sign an existing Harbor sentinel/* image.
+#
+# Purpose:
+#   Sign an existing Harbor image that is missing cosign signatures.
+#   This handles cases where an image was pushed to harbor.208.haist.farm/sentinel/*
+#   without going through the standard sign pipeline (e.g. mirrored upstream images).
+#
+# When to use:
+#   - A new upstream image was mirrored to harbor but not signed
+#   - Kyverno verify-image-signatures (Enforce) is blocking deployment
+#   - The image already exists in Harbor; no rebuild needed
+#
+# Pattern mirrors build-sentinel-ops.yml: sign composite (OCI 1.1 Referrers API).
+# After signing, verify via cosign verify (OPS-1121: cryptographic Referrers-aware verify).
+#
+# NOTE: This workflow signs only. It does NOT build or push the image.
+# The image must already exist in Harbor before running this workflow.
+#
+# SLSA attestation (verify-attestations is Audit-only, not Enforce as of 2026-05-22):
+#   This workflow does not create SLSA attestations for mirrored upstream images
+#   because the predicate would require a builder-id and source-repository matching
+#   the Kyverno verify-attestations allowlist. For mirrored images without real
+#   build provenance, this is not meaningful. Skip attestation; cosign signature
+#   alone satisfies the Enforce policy (verify-image-signatures).
+#
+# OPS-655: First use was defectdojo-nginx:2.55.4 signed 2026-05-22 via one-off
+#   cosign sign (not through this workflow; workflow created as the canonical
+#   future mechanism).
+
+name: Sign Harbor image (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image-ref:
+        description: >
+          Fully-qualified Harbor image reference with digest:
+          harbor.208.haist.farm/sentinel/myapp@sha256:abc123
+          (Use digest, not tag, for supply-chain integrity)
+        required: true
+      reason:
+        description: "Plane issue / reason for signing (e.g. OPS-655)"
+        required: true
+
+env:
+  HARBOR_REGISTRY: harbor.208.haist.farm
+
+jobs:
+  sign:
+    runs-on: iac
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate image-ref is a harbor sentinel/* image
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${{ github.event.inputs.image-ref }}"
+          echo "Validating image-ref: ${IMAGE_REF}"
+          if ! echo "${IMAGE_REF}" | grep -qE '^harbor\.208\.haist\.farm/sentinel/.+@sha256:[a-f0-9]{64}$'; then
+            echo "::error::image-ref must match harbor.208.haist.farm/sentinel/<repo>@sha256:<digest>"
+            echo "::error::Got: ${IMAGE_REF}"
+            echo "::error::Reason: only harbor sentinel/* images need cosign signing via this workflow."
+            exit 1
+          fi
+          echo "Validation passed: ${IMAGE_REF}"
+          echo "Reason: ${{ github.event.inputs.reason }}"
+
+      - name: Login to Harbor
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "Logging into Harbor..."
+          echo "${HARBOR_PASSWORD}" | cosign login "${HARBOR_REGISTRY}" \
+            --username "${HARBOR_USERNAME}" --password-stdin
+          echo "Harbor login OK"
+
+      # sign: cosign sign (OCI 1.1 Referrers API, COSIGN_EXPERIMENTAL=1) — must-succeed
+      - name: Sign image
+        uses: ./.forgejo/actions/sign
+        with:
+          image-ref: ${{ github.event.inputs.image-ref }}
+          cosign-key: ${{ secrets.COSIGN_KEY }}
+          cosign-password: ${{ secrets.COSIGN_PASSWORD || '' }}
+
+      # ---------------------------------------------------------------
+      # OPS-1121: Referrers-aware cryptographic cosign verify (replaces legacy .sig tag probe).
+      #
+      # The sign composite (OCI 1.1 Referrers API, COSIGN_EXPERIMENTAL=1) stores
+      # signatures as Referrers API accessories — NOT as sha256-<hex>.sig tags.
+      # The previous OPS-988 step probed for a .sig tag that never exists in
+      # Referrers mode, causing all three sign-harbor-image.yml runs on 2026-05-27
+      # (tasks 30436, 30437, 30639) to report failure even though images were signed.
+      #
+      # Fix: use cosign verify directly against the image digest. cosign queries
+      # the OCI Referrers API to find the signature accessory and cryptographically
+      # verifies it against the platform public key.
+      #
+      # --insecure-ignore-tlog is REQUIRED: the platform signs with --tlog-upload=false
+      # (no Rekor transparency log). Without this flag cosign verify fails looking for
+      # a tlog entry that was never written. This is the correct posture for a
+      # private registry with a local key (no public Sigstore infrastructure).
+      #
+      # The public key (/etc/cosign/cosign.pub) is Ansible-provisioned on iac runners
+      # from Vault secret/cosign. This is a real cryptographic verify — strictly
+      # stronger than the former presence check.
+      # ---------------------------------------------------------------
+      - name: Verify cosign signature (OCI 1.1 Referrers cryptographic verify)
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${{ github.event.inputs.image-ref }}"
+          echo "=== OPS-1121 verify: cosign cryptographic signature verification ==="
+          echo "Image: ${IMAGE_REF}"
+          echo "Key: /etc/cosign/cosign.pub"
+          cosign verify \
+            --key /etc/cosign/cosign.pub \
+            --insecure-ignore-tlog \
+            "${IMAGE_REF}"
+          echo "PASS: cosign signature cryptographically verified (OCI 1.1 Referrers API)"
+          echo "Signed image: ${IMAGE_REF}"
+          echo "Reason: ${{ github.event.inputs.reason }}"

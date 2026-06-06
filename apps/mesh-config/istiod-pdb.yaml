@@ -1,0 +1,16 @@
+---
+# PodDisruptionBudget for istiod to keep the mesh control plane available
+# during voluntary disruptions (node drain, rolling upgrade). Paired with
+# pilot.replicaCount: 2 in apps/istio-controlplane/istio.yaml.
+# OPS-208.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: istiod
+  namespace: istio-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: istiod
+      istio: pilot

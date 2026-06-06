@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: thanos-querier
+  description: OKD built-in Thanos query frontend for aggregated Prometheus metrics
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=thanos-query
+    backstage.io/kubernetes-namespace: openshift-monitoring
+  tags:
+    - monitoring
+    - prometheus
+    - system-component
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  providesApis:
+    - prometheus-api

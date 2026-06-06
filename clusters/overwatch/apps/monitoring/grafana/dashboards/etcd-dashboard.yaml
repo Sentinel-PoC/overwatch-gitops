@@ -1,0 +1,280 @@
+apiVersion: v1
+data:
+  etcd.json: "{\n  \"annotations\": {\n    \"list\": []\n  },\n  \"editable\": true,\n  \"gnetId\": 3070,\n  \"graphTooltip\": 0,\n  \"hideControls\": false,\n  \"id\": null,\n  \"links\": [],\n  \"rows\"\
+    : [\n    {\n      \"collapse\": false,\n      \"height\": 250,\n      \"panels\": [\n        {\n          \"cacheTimeout\": null,\n          \"colorBackground\": false,\n          \"colorValue\": true,\n\
+    \          \"colors\": [\n            \"rgba(245, 54, 54, 0.9)\",\n            \"rgba(237, 129, 40, 0.89)\",\n            \"rgba(50, 172, 45, 0.97)\"\n          ],\n          \"datasource\": \"${DS_PROMETHEUS}\"\
+    ,\n          \"format\": \"none\",\n          \"gauge\": {\n            \"maxValue\": 100,\n            \"minValue\": 0,\n            \"show\": false,\n            \"thresholdLabels\": false,\n    \
+    \        \"thresholdMarkers\": true\n          },\n          \"id\": 44,\n          \"interval\": null,\n          \"links\": [],\n          \"mappingType\": 1,\n          \"mappingTypes\": [\n    \
+    \        {\n              \"name\": \"value to text\",\n              \"value\": 1\n            },\n            {\n              \"name\": \"range to text\",\n              \"value\": 2\n          \
+    \  }\n          ],\n          \"maxDataPoints\": 100,\n          \"nullPointMode\": \"connected\",\n          \"nullText\": null,\n          \"postfix\": \"\",\n          \"postfixFontSize\": \"50%\"\
+    ,\n          \"prefix\": \"\",\n          \"prefixFontSize\": \"50%\",\n          \"rangeMaps\": [\n            {\n              \"from\": \"null\",\n              \"text\": \"N/A\",\n             \
+    \ \"to\": \"null\"\n            }\n          ],\n          \"span\": 4,\n          \"sparkline\": {\n            \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n            \"full\": false,\n        \
+    \    \"lineColor\": \"rgb(31, 120, 193)\",\n            \"show\": false\n          },\n          \"tableColumn\": \"\",\n          \"targets\": [\n            {\n              \"expr\": \"max(etcd_server_has_leader)\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"refId\": \"A\",\n              \"step\": 600\n            }\n          ],\n          \"thresholds\"\
+    : \"0,1\",\n          \"title\": \"Etcd has a leader?\",\n          \"type\": \"singlestat\",\n          \"valueFontSize\": \"80%\",\n          \"valueMaps\": [\n            {\n              \"op\"\
+    : \"=\",\n              \"text\": \"YES\",\n              \"value\": \"1\"\n            },\n            {\n              \"op\": \"=\",\n              \"text\": \"NO\",\n              \"value\": \"\
+    0\"\n            }\n          ],\n          \"valueName\": \"avg\"\n        },\n        {\n          \"cacheTimeout\": null,\n          \"colorBackground\": false,\n          \"colorValue\": false,\n\
+    \          \"colors\": [\n            \"rgba(245, 54, 54, 0.9)\",\n            \"rgba(237, 129, 40, 0.89)\",\n            \"rgba(50, 172, 45, 0.97)\"\n          ],\n          \"datasource\": \"${DS_PROMETHEUS}\"\
+    ,\n          \"format\": \"none\",\n          \"gauge\": {\n            \"maxValue\": 100,\n            \"minValue\": 0,\n            \"show\": false,\n            \"thresholdLabels\": false,\n    \
+    \        \"thresholdMarkers\": true\n          },\n          \"id\": 42,\n          \"interval\": null,\n          \"links\": [],\n          \"mappingType\": 1,\n          \"mappingTypes\": [\n    \
+    \        {\n              \"name\": \"value to text\",\n              \"value\": 1\n            },\n            {\n              \"name\": \"range to text\",\n              \"value\": 2\n          \
+    \  }\n          ],\n          \"maxDataPoints\": 100,\n          \"nullPointMode\": \"connected\",\n          \"nullText\": null,\n          \"postfix\": \"\",\n          \"postfixFontSize\": \"50%\"\
+    ,\n          \"prefix\": \"\",\n          \"prefixFontSize\": \"50%\",\n          \"rangeMaps\": [\n            {\n              \"from\": \"null\",\n              \"text\": \"N/A\",\n             \
+    \ \"to\": \"null\"\n            }\n          ],\n          \"span\": 4,\n          \"sparkline\": {\n            \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n            \"full\": false,\n        \
+    \    \"lineColor\": \"rgb(31, 120, 193)\",\n            \"show\": false\n          },\n          \"tableColumn\": \"\",\n          \"targets\": [\n            {\n              \"expr\": \"max(etcd_server_leader_changes_seen_total)\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"refId\": \"A\",\n              \"step\": 600\n            }\n          ],\n          \"thresholds\"\
+    : \"\",\n          \"title\": \"The number of leader changes seen\",\n          \"type\": \"singlestat\",\n          \"valueFontSize\": \"80%\",\n          \"valueMaps\": [\n            {\n        \
+    \      \"op\": \"=\",\n              \"text\": \"N/A\",\n              \"value\": \"null\"\n            }\n          ],\n          \"valueName\": \"avg\"\n        },\n        {\n          \"cacheTimeout\"\
+    : null,\n          \"colorBackground\": false,\n          \"colorValue\": false,\n          \"colors\": [\n            \"rgba(245, 54, 54, 0.9)\",\n            \"rgba(237, 129, 40, 0.89)\",\n      \
+    \      \"rgba(50, 172, 45, 0.97)\"\n          ],\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"format\": \"none\",\n          \"gauge\": {\n            \"maxValue\": 100,\n         \
+    \   \"minValue\": 0,\n            \"show\": false,\n            \"thresholdLabels\": false,\n            \"thresholdMarkers\": true\n          },\n          \"id\": 43,\n          \"interval\": null,\n\
+    \          \"links\": [],\n          \"mappingType\": 1,\n          \"mappingTypes\": [\n            {\n              \"name\": \"value to text\",\n              \"value\": 1\n            },\n     \
+    \       {\n              \"name\": \"range to text\",\n              \"value\": 2\n            }\n          ],\n          \"maxDataPoints\": 100,\n          \"nullPointMode\": \"connected\",\n     \
+    \     \"nullText\": null,\n          \"postfix\": \"\",\n          \"postfixFontSize\": \"50%\",\n          \"prefix\": \"\",\n          \"prefixFontSize\": \"50%\",\n          \"rangeMaps\": [\n  \
+    \          {\n              \"from\": \"null\",\n              \"text\": \"N/A\",\n              \"to\": \"null\"\n            }\n          ],\n          \"span\": 4,\n          \"sparkline\": {\n \
+    \           \"fillColor\": \"rgba(31, 118, 189, 0.18)\",\n            \"full\": false,\n            \"lineColor\": \"rgb(31, 120, 193)\",\n            \"show\": false\n          },\n          \"tableColumn\"\
+    : \"\",\n          \"targets\": [\n            {\n              \"expr\": \"max(etcd_server_leader_changes_seen_total)\",\n              \"format\": \"time_series\",\n              \"intervalFactor\"\
+    : 2,\n              \"refId\": \"A\",\n              \"step\": 600\n            }\n          ],\n          \"thresholds\": \"\",\n          \"title\": \"The total number of failed proposals seen\",\n\
+    \          \"type\": \"singlestat\",\n          \"valueFontSize\": \"80%\",\n          \"valueMaps\": [\n            {\n              \"op\": \"=\",\n              \"text\": \"N/A\",\n             \
+    \ \"value\": \"null\"\n            }\n          ],\n          \"valueName\": \"avg\"\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\": null,\n \
+    \     \"showTitle\": false,\n      \"title\": \"Dashboard Row\",\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\": false,\n      \"height\": 252,\n      \"panels\": [\n        {\n   \
+    \       \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n\
+    \          \"error\": false,\n          \"fill\": 0,\n          \"id\": 23,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n    \
+    \        \"min\": false,\n            \"show\": false,\n            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n        \
+    \  \"links\": [],\n          \"nullPointMode\": \"connected\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n   \
+    \       \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 6,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n  \
+    \            \"expr\": \"sum(rate(grpc_server_started_total{grpc_type=\\\"unary\\\"}[5m]))\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\"\
+    : \"RPC Rate\",\n              \"metric\": \"grpc_server_started_total\",\n              \"refId\": \"A\",\n              \"step\": 60\n            },\n            {\n              \"expr\": \"sum(rate(grpc_server_handled_total{grpc_type=\\\
+    \"unary\\\",grpc_code!=\\\"OK\\\"}[5m]))\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"RPC Failed Rate\",\n              \"\
+    metric\": \"grpc_server_handled_total\",\n              \"refId\": \"B\",\n              \"step\": 60\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n   \
+    \       \"timeShift\": null,\n          \"title\": \"RPC Rate\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n          \
+    \  \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n\
+    \            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"ops\",\n              \"label\": null,\n              \"logBase\"\
+    : 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n\
+    \              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        },\n        {\n          \"aliasColors\"\
+    : {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n          \"error\": false,\n\
+    \          \"fill\": 0,\n          \"id\": 41,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n    \
+    \        \"show\": false,\n            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"\
+    nullPointMode\": \"connected\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n\
+    \          \"spaceLength\": 10,\n          \"span\": 6,\n          \"stack\": true,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(grpc_server_started_total{grpc_service=\\\
+    \"etcdserverpb.Watch\\\",grpc_type=\\\"bidi_stream\\\"}) - sum(grpc_server_handled_total{grpc_service=\\\"etcdserverpb.Watch\\\",grpc_type=\\\"bidi_stream\\\"})\",\n              \"format\": \"time_series\"\
+    ,\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"Watch Streams\",\n              \"metric\": \"grpc_server_handled_total\",\n              \"refId\": \"A\",\n             \
+    \ \"step\": 60\n            },\n            {\n              \"expr\": \"sum(grpc_server_started_total{grpc_service=\\\"etcdserverpb.Lease\\\",grpc_type=\\\"bidi_stream\\\"}) - sum(grpc_server_handled_total{grpc_service=\\\
+    \"etcdserverpb.Lease\\\",grpc_type=\\\"bidi_stream\\\"})\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"Lease Streams\",\n  \
+    \            \"metric\": \"grpc_server_handled_total\",\n              \"refId\": \"B\",\n              \"step\": 60\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\"\
+    : null,\n          \"timeShift\": null,\n          \"title\": \"Active Streams\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\"\
+    : 0,\n            \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"\
+    name\": null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\": \"\",\n  \
+    \            \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n        \
+    \      \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        }\n      ],\n  \
+    \    \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\": null,\n      \"showTitle\": false,\n      \"title\": \"Row\",\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\"\
+    : false,\n      \"height\": \"250px\",\n      \"panels\": [\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n    \
+    \      \"datasource\": \"${DS_PROMETHEUS}\",\n          \"decimals\": null,\n          \"editable\": true,\n          \"error\": false,\n          \"fill\": 0,\n          \"grid\": {},\n          \"\
+    id\": 1,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": false,\n            \"\
+    total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\",\n       \
+    \   \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n     \
+    \     \"span\": 4,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"etcd_debugging_mvcc_db_total_size_in_bytes\",\n\
+    \              \"format\": \"time_series\",\n              \"hide\": false,\n              \"interval\": \"\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} DB\
+    \ Size\",\n              \"metric\": \"\",\n              \"refId\": \"A\",\n              \"step\": 120\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n\
+    \          \"timeShift\": null,\n          \"title\": \"DB Size\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n        \
+    \    \"value_type\": \"cumulative\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n\
+    \            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"bytes\",\n              \"logBase\": 1,\n              \"max\"\
+    : null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"logBase\": 1,\n              \"max\": null,\n\
+    \              \"min\": null,\n              \"show\": false\n            }\n          ]\n        },\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\"\
+    : 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n          \"error\": false,\n          \"fill\": 0,\n          \"grid\": {},\n  \
+    \        \"id\": 3,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": false,\n \
+    \           \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\"\
+    ,\n          \"percentage\": false,\n          \"pointradius\": 1,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n\
+    \          \"span\": 4,\n          \"stack\": false,\n          \"steppedLine\": true,\n          \"targets\": [\n            {\n              \"expr\": \"histogram_quantile(0.99, sum(rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))\
+    \ by (instance, le))\",\n              \"format\": \"time_series\",\n              \"hide\": false,\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} WAL fsync\"\
+    ,\n              \"metric\": \"etcd_disk_wal_fsync_duration_seconds_bucket\",\n              \"refId\": \"A\",\n              \"step\": 120\n            },\n            {\n              \"expr\": \"\
+    histogram_quantile(0.99, sum(rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])) by (instance, le))\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n   \
+    \           \"legendFormat\": \"{{instance}} DB fsync\",\n              \"metric\": \"etcd_disk_backend_commit_duration_seconds_bucket\",\n              \"refId\": \"B\",\n              \"step\": 120\n\
+    \            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"Disk Sync Duration\",\n          \"tooltip\": {\n \
+    \           \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"cumulative\"\n          },\n          \"type\": \"graph\",\n          \"\
+    xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\":\
+    \ [\n            {\n              \"format\": \"s\",\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n      \
+    \      {\n              \"format\": \"short\",\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": false\n            }\n          ]\n\
+    \        },\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n   \
+    \       \"editable\": true,\n          \"error\": false,\n          \"fill\": 0,\n          \"id\": 29,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n     \
+    \       \"max\": false,\n            \"min\": false,\n            \"show\": false,\n            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n         \
+    \ \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"\
+    renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 4,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\"\
+    : [\n            {\n              \"expr\": \"process_resident_memory_bytes\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}}\
+    \ Resident Memory\",\n              \"metric\": \"process_resident_memory_bytes\",\n              \"refId\": \"A\",\n              \"step\": 120\n            }\n          ],\n          \"thresholds\"\
+    : [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"Memory\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n\
+    \            \"sort\": 0,\n            \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"\
+    time\",\n            \"name\": null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"bytes\",\n           \
+    \   \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\"\
+    : \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n  \
+    \      }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\": null,\n      \"showTitle\": false,\n      \"title\": \"New row\",\n      \"titleSize\": \"h6\"\n\
+    \    },\n    {\n      \"collapse\": false,\n      \"height\": \"250px\",\n      \"panels\": [\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n\
+    \          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n          \"error\": false,\n          \"fill\": 5,\n          \"id\": 22,\n          \"\
+    legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": false,\n            \"total\": false,\n   \
+    \         \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\",\n          \"percentage\": false,\n\
+    \          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 3,\n        \
+    \  \"stack\": true,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"rate(etcd_network_client_grpc_received_bytes_total[5m])\",\n              \"\
+    format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} Client Traffic In\",\n              \"metric\": \"etcd_network_client_grpc_received_bytes_total\"\
+    ,\n              \"refId\": \"A\",\n              \"step\": 120\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n         \
+    \ \"title\": \"Client Traffic In\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"individual\"\
+    \n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n  \
+    \          \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"\
+    max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\"\
+    : 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        },\n        {\n          \"aliasColors\": {},\n          \"bars\"\
+    : false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n          \"error\": false,\n          \"fill\"\
+    : 5,\n          \"id\": 21,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": false,\n\
+    \            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\"\
+    ,\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n\
+    \          \"span\": 3,\n          \"stack\": true,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"rate(etcd_network_client_grpc_sent_bytes_total[5m])\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} Client Traffic Out\",\n              \"metric\": \"etcd_network_client_grpc_sent_bytes_total\"\
+    ,\n              \"refId\": \"A\",\n              \"step\": 120\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n         \
+    \ \"title\": \"Client Traffic Out\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"individual\"\
+    \n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n  \
+    \          \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"Bps\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\"\
+    : null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n\
+    \              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        },\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n\
+    \          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n          \"error\": false,\n          \"fill\": 0,\n  \
+    \        \"id\": 20,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": false,\n\
+    \            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\"\
+    ,\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n\
+    \          \"span\": 3,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_network_peer_received_bytes_total[5m]))\
+    \ by (instance)\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} Peer Traffic In\",\n              \"metric\": \"\
+    etcd_network_peer_received_bytes_total\",\n              \"refId\": \"A\",\n              \"step\": 120\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n \
+    \         \"timeShift\": null,\n          \"title\": \"Peer Traffic In\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n \
+    \           \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\"\
+    : null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"Bps\",\n              \"label\": null,\n          \
+    \    \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"\
+    label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        },\n        {\n         \
+    \ \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"decimals\": null,\n    \
+    \      \"editable\": true,\n          \"error\": false,\n          \"fill\": 0,\n          \"grid\": {},\n          \"id\": 16,\n          \"legend\": {\n            \"avg\": false,\n            \"\
+    current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": false,\n            \"total\": false,\n            \"values\": false\n          },\n          \"lines\"\
+    : true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n\
+    \          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 3,\n          \"stack\": false,\n          \"steppedLine\": false,\n     \
+    \     \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_network_peer_sent_bytes_total[5m])) by (instance)\",\n              \"format\": \"time_series\",\n              \"hide\"\
+    : false,\n              \"interval\": \"\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} Peer Traffic Out\",\n              \"metric\": \"etcd_network_peer_sent_bytes_total\"\
+    ,\n              \"refId\": \"A\",\n              \"step\": 120\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n         \
+    \ \"title\": \"Peer Traffic Out\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"cumulative\"\
+    \n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n  \
+    \          \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"Bps\",\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\"\
+    : null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n\
+    \              \"show\": true\n            }\n          ]\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\": null,\n      \"showTitle\": false,\n\
+    \      \"title\": \"New row\",\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\": false,\n      \"height\": \"250px\",\n      \"panels\": [\n        {\n          \"aliasColors\": {},\n\
+    \          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"editable\": true,\n          \"error\": false,\n\
+    \          \"fill\": 0,\n          \"id\": 40,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n    \
+    \        \"show\": false,\n            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"\
+    nullPointMode\": \"connected\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n\
+    \          \"spaceLength\": 10,\n          \"span\": 6,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_server_proposals_failed_total[5m]))\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"Proposal Failure Rate\",\n              \"metric\": \"etcd_server_proposals_failed_total\"\
+    ,\n              \"refId\": \"A\",\n              \"step\": 60\n            },\n            {\n              \"expr\": \"sum(etcd_server_proposals_pending)\",\n              \"format\": \"time_series\"\
+    ,\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"Proposal Pending Total\",\n              \"metric\": \"etcd_server_proposals_pending\",\n              \"refId\": \"B\",\n\
+    \              \"step\": 60\n            },\n            {\n              \"expr\": \"sum(rate(etcd_server_proposals_committed_total[5m]))\",\n              \"format\": \"time_series\",\n          \
+    \    \"intervalFactor\": 2,\n              \"legendFormat\": \"Proposal Commit Rate\",\n              \"metric\": \"etcd_server_proposals_committed_total\",\n              \"refId\": \"C\",\n      \
+    \        \"step\": 60\n            },\n            {\n              \"expr\": \"sum(rate(etcd_server_proposals_applied_total[5m]))\",\n              \"format\": \"time_series\",\n              \"intervalFactor\"\
+    : 2,\n              \"legendFormat\": \"Proposal Apply Rate\",\n              \"refId\": \"D\",\n              \"step\": 60\n            }\n          ],\n          \"thresholds\": [],\n          \"\
+    timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"Raft Proposals\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n         \
+    \   \"sort\": 0,\n            \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n\
+    \            \"name\": null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\"\
+    : \"\",\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n\
+    \              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        },\n   \
+    \     {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"decimals\"\
+    : 0,\n          \"editable\": true,\n          \"error\": false,\n          \"fill\": 0,\n          \"id\": 19,\n          \"legend\": {\n            \"alignAsTable\": false,\n            \"avg\": false,\n\
+    \            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"rightSide\": false,\n            \"show\": false,\n            \"total\": false,\n         \
+    \   \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 2,\n          \"links\": [],\n          \"nullPointMode\": \"connected\",\n          \"percentage\": false,\n\
+    \          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 6,\n        \
+    \  \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"changes(etcd_server_leader_changes_seen_total[1d])\",\n              \"format\"\
+    : \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"{{instance}} Total Leader Elections Per Day\",\n              \"metric\": \"etcd_server_leader_changes_seen_total\"\
+    ,\n              \"refId\": \"A\",\n              \"step\": 60\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n          \"\
+    title\": \"Total Leader Elections Per Day\",\n          \"tooltip\": {\n            \"msResolution\": false,\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"\
+    individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\"\
+    : true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n      \
+    \        \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n           \
+    \   \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\"\
+    : null,\n      \"repeatRowId\": null,\n      \"showTitle\": false,\n      \"title\": \"New row\",\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\": false,\n      \"height\": 250,\n  \
+    \    \"panels\": [\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\"\
+    ,\n          \"description\": \"proposals_committed_total records the total number of consensus proposals committed. This gauge should increase over time if the cluster is healthy. Several healthy members\
+    \ of an etcd cluster may have different total committed proposals at once. This discrepancy may be due to recovering from peers after starting, lagging behind the leader, or being the leader and therefore\
+    \ having the most commits. It is important to monitor this metric across all the members in the cluster; a consistently large lag between a single member and its leader indicates that member is slow\
+    \ or unhealthy.\\n\\nproposals_applied_total records the total number of consensus proposals applied. The etcd server applies every committed proposal asynchronously. The difference between proposals_committed_total\
+    \ and proposals_applied_total should usually be small (within a few thousands even under high load). If the difference between them continues to rise, it indicates that the etcd server is overloaded.\
+    \ This might happen when applying expensive queries like heavy range queries or large txn operations.\",\n          \"fill\": 1,\n          \"id\": 2,\n          \"legend\": {\n            \"alignAsTable\"\
+    : true,\n            \"avg\": true,\n            \"current\": true,\n            \"max\": true,\n            \"min\": false,\n            \"rightSide\": false,\n            \"show\": true,\n       \
+    \     \"total\": false,\n            \"values\": true\n          },\n          \"lines\": true,\n          \"linewidth\": 1,\n          \"links\": [],\n          \"nullPointMode\": \"null\",\n     \
+    \     \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n   \
+    \       \"span\": 6,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_server_proposals_committed_total[5m]))\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"total number of consensus proposals committed\",\n              \"metric\": \"\"\
+    ,\n              \"refId\": \"A\",\n              \"step\": 60\n            },\n            {\n              \"expr\": \"sum(rate(etcd_server_proposals_applied_total[5m]))\",\n              \"format\"\
+    : \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"total number of consensus proposals applied\",\n              \"metric\": \"\",\n              \"refId\":\
+    \ \"B\",\n              \"step\": 60\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"The total number\
+    \ of consensus proposals committed\",\n          \"tooltip\": {\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"individual\"\n          },\n          \"type\"\
+    : \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n            \"values\": []\n        \
+    \  },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\"\
+    : null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": \"\",\n              \"logBase\": 1,\n              \"max\": null,\n\
+    \              \"min\": null,\n              \"show\": true\n            }\n          ]\n        },\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\":\
+    \ 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"description\": \"indicates how many proposals are queued to commit. Rising pending proposals suggests\
+    \ there is a high client load or the member cannot commit proposals.\",\n          \"fill\": 1,\n          \"id\": 5,\n          \"legend\": {\n            \"avg\": false,\n            \"current\":\
+    \ false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": true,\n            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n\
+    \          \"linewidth\": 1,\n          \"links\": [],\n          \"nullPointMode\": \"null\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n      \
+    \    \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 6,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"\
+    targets\": [\n            {\n              \"expr\": \"sum(etcd_server_proposals_pending)\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\"\
+    : \"Proposals pending\",\n              \"refId\": \"A\",\n              \"step\": 60\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\"\
+    : null,\n          \"title\": \"Proposals pending\",\n          \"tooltip\": {\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"individual\"\n          },\n  \
+    \        \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n            \"values\"\
+    : []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n       \
+    \       \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n           \
+    \   \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\"\
+    : null,\n      \"showTitle\": false,\n      \"title\": \"Dashboard Row\",\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\": false,\n      \"height\": 250,\n      \"panels\": [\n     \
+    \   {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"fill\": 1,\n\
+    \          \"id\": 7,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": true,\n\
+    \            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 1,\n          \"links\": [],\n          \"nullPointMode\": \"null\"\
+    ,\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n\
+    \          \"span\": 12,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_disk_wal_fsync_duration_seconds_sum[1m]))\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"\\tThe latency distributions of fsync called by wal\",\n              \"refId\"\
+    : \"A\",\n              \"step\": 30\n            },\n            {\n              \"expr\": \"sum(rate(etcd_disk_backend_commit_duration_seconds_sum[1m]))\",\n              \"format\": \"time_series\"\
+    ,\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"The latency distributions of commit called by backend\",\n              \"refId\": \"B\",\n              \"step\": 30\n   \
+    \         }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"Disks operations\",\n          \"tooltip\": {\n      \
+    \      \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n\
+    \            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\"\
+    : \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n\
+    \              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n     \
+    \       }\n          ]\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\": null,\n      \"showTitle\": false,\n      \"title\": \"Dashboard Row\"\
+    ,\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\": false,\n      \"height\": 250,\n      \"panels\": [\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n      \
+    \    \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\",\n          \"fill\": 1,\n          \"id\": 8,\n          \"legend\": {\n            \"avg\": false,\n\
+    \            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": true,\n            \"total\": false,\n            \"values\": false\n          },\n\
+    \          \"lines\": true,\n          \"linewidth\": 1,\n          \"links\": [],\n          \"nullPointMode\": \"null\",\n          \"percentage\": false,\n          \"pointradius\": 5,\n        \
+    \  \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n          \"span\": 12,\n          \"stack\": false,\n          \"steppedLine\"\
+    : false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_network_client_grpc_received_bytes_total[1m]))\",\n              \"format\": \"time_series\",\n           \
+    \   \"intervalFactor\": 2,\n              \"legendFormat\": \"The total number of bytes received by grpc clients\",\n              \"refId\": \"A\",\n              \"step\": 30\n            },\n   \
+    \         {\n              \"expr\": \"sum(rate(etcd_network_client_grpc_sent_bytes_total[1m]))\",\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"\
+    legendFormat\": \"The total number of bytes sent to grpc clients\",\n              \"refId\": \"B\",\n              \"step\": 30\n            }\n          ],\n          \"thresholds\": [],\n       \
+    \   \"timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"Network\",\n          \"tooltip\": {\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\"\
+    : \"individual\"\n          },\n          \"type\": \"graph\",\n          \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\"\
+    : true,\n            \"values\": []\n          },\n          \"yaxes\": [\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n      \
+    \        \"max\": null,\n              \"min\": null,\n              \"show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n           \
+    \   \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"show\": true\n            }\n          ]\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\"\
+    : null,\n      \"repeatRowId\": null,\n      \"showTitle\": false,\n      \"title\": \"Dashboard Row\",\n      \"titleSize\": \"h6\"\n    },\n    {\n      \"collapse\": false,\n      \"height\": 250,\n\
+    \      \"panels\": [\n        {\n          \"aliasColors\": {},\n          \"bars\": false,\n          \"dashLength\": 10,\n          \"dashes\": false,\n          \"datasource\": \"${DS_PROMETHEUS}\"\
+    ,\n          \"description\": \"Abnormally high snapshot duration (snapshot_save_total_duration_seconds) indicates disk issues and might cause the cluster to be unstable.\",\n          \"fill\": 1,\n\
+    \          \"id\": 9,\n          \"legend\": {\n            \"avg\": false,\n            \"current\": false,\n            \"max\": false,\n            \"min\": false,\n            \"show\": true,\n\
+    \            \"total\": false,\n            \"values\": false\n          },\n          \"lines\": true,\n          \"linewidth\": 1,\n          \"links\": [],\n          \"nullPointMode\": \"null\"\
+    ,\n          \"percentage\": false,\n          \"pointradius\": 5,\n          \"points\": false,\n          \"renderer\": \"flot\",\n          \"seriesOverrides\": [],\n          \"spaceLength\": 10,\n\
+    \          \"span\": 12,\n          \"stack\": false,\n          \"steppedLine\": false,\n          \"targets\": [\n            {\n              \"expr\": \"sum(rate(etcd_debugging_snap_save_total_duration_seconds_sum[1m]))\"\
+    ,\n              \"format\": \"time_series\",\n              \"intervalFactor\": 2,\n              \"legendFormat\": \"The total latency distributions of save called by snapshot\",\n              \"\
+    refId\": \"A\",\n              \"step\": 30\n            }\n          ],\n          \"thresholds\": [],\n          \"timeFrom\": null,\n          \"timeShift\": null,\n          \"title\": \"Snapshot\
+    \ duration\",\n          \"tooltip\": {\n            \"shared\": true,\n            \"sort\": 0,\n            \"value_type\": \"individual\"\n          },\n          \"type\": \"graph\",\n         \
+    \ \"xaxis\": {\n            \"buckets\": null,\n            \"mode\": \"time\",\n            \"name\": null,\n            \"show\": true,\n            \"values\": []\n          },\n          \"yaxes\"\
+    : [\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\": null,\n              \"\
+    show\": true\n            },\n            {\n              \"format\": \"short\",\n              \"label\": null,\n              \"logBase\": 1,\n              \"max\": null,\n              \"min\"\
+    : null,\n              \"show\": true\n            }\n          ]\n        }\n      ],\n      \"repeat\": null,\n      \"repeatIteration\": null,\n      \"repeatRowId\": null,\n      \"showTitle\":\
+    \ false,\n      \"title\": \"Dashboard Row\",\n      \"titleSize\": \"h6\"\n    }\n  ],\n  \"schemaVersion\": 14,\n  \"style\": \"dark\",\n  \"tags\": [],\n  \"templating\": {\n    \"list\": []\n  },\n\
+    \  \"time\": {\n    \"from\": \"now-6h\",\n    \"to\": \"now\"\n  },\n  \"timepicker\": {\n    \"refresh_intervals\": [\n      \"5s\",\n      \"10s\",\n      \"30s\",\n      \"1m\",\n      \"5m\",\n\
+    \      \"15m\",\n      \"30m\",\n      \"1h\",\n      \"2h\",\n      \"1d\"\n    ],\n    \"time_options\": [\n      \"5m\",\n      \"15m\",\n      \"1h\",\n      \"6h\",\n      \"12h\",\n      \"24h\"\
+    ,\n      \"2d\",\n      \"7d\",\n      \"30d\"\n    ]\n  },\n  \"timezone\": \"browser\",\n  \"title\": \"Etcd by Prometheus\",\n  \"version\": 2,\n  \"description\": \"Etcd Dashboard for Prometheus\
+    \ metrics scraper\"\n}"
+kind: ConfigMap
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+  labels:
+    grafana_dashboard: '1'
+  name: grafana-dashboard-etcd
+  namespace: monitoring

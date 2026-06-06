@@ -1,0 +1,25 @@
+---
+# Default deny-all for haists-website namespace
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: haists-website
+spec: {}
+---
+# Allow ingress from Istio IngressGateway to haists-website
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: haists-website
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haists-website
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway

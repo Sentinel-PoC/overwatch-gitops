@@ -1,0 +1,16 @@
+apiVersion: monitoring.openshift.io/v1
+kind: AlertRelabelConfig
+metadata:
+  name: suppress-ovn-overflow-kernel
+  namespace: openshift-monitoring
+spec:
+  configs:
+    # OPS-104: OVNKubernetesNodeOVSOverflowKernel fires at >0 drops despite
+    # sysctl buffer tuning (99-master-sysctl-ovs-buffer MachineConfig).
+    # Actual loss rate: ~33 drops/5min on 233M lookups = 0.003%.
+    # The zero-tolerance threshold is noise. Drop the alert.
+    - sourceLabels:
+        - alertname
+      targetLabel: severity
+      regex: OVNKubernetesNodeOVSOverflowKernel
+      action: Drop

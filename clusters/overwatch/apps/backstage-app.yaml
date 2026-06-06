@@ -1,0 +1,45 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backstage
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/backstage
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: backstage
+  ignoreDifferences:
+    - kind: PersistentVolumeClaim
+      jqPathExpressions:
+        - .spec.resources.requests.storage
+        - .spec.storageClassName
+        - .spec.volumeName
+        - .spec.selector
+    # OPS-647: Narrowed from broad .spec.data[]?.remoteRef + .spec.target masks to
+    # only the specific sub-fields ESO adds as CRD defaults after creation.
+    # reconcile.external-secrets.io/trigger annotation retained (ESO-mutated).
+    # OPS-413: Added spec.refreshInterval — Kubernetes normalizes Go Duration "1h" to
+    # "1h0m0s" in the stored object (time.Duration.String()), producing persistent ArgoCD
+    # OutOfSync despite no functional change. Suppressing here alongside ESO defaults.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+        - .spec.refreshInterval
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

@@ -1,0 +1,149 @@
+# OPS-747: NetworkPolicy default-deny baseline for kyverno namespace.
+# Deferred from OPS-517 Phase 1b (2026-05-18).
+#
+# Pods in scope:
+#   - kyverno-admission-controller (webhook server — port 9443)
+#   - kyverno-background-controller (batch policy enforcement)
+#   - kyverno-cleanup-controller (TTL cleanup)
+#   - kyverno-reports-controller (PolicyReport aggregation)
+#
+# Traffic requirements:
+#   - All pods: DNS + kube-API (watch ClusterPolicies, patch resources)
+#   - kyverno-admission-controller: ingress from kube-apiserver on port 9443
+#     (MutatingWebhookConfiguration + ValidatingWebhookConfiguration)
+#   - kyverno pods: egress to Harbor (443) + mirror (8443) for verify-image-signatures
+#     (see apps/kyverno-policies/verify-image-signatures.yaml)
+#   - Intra-namespace: controllers share secrets, coordinate on PolicyReports
+#
+# Webhook ingress pattern: open source (any) on port 9443.
+# kube-apiserver has no NetworkPolicy-friendly pod label; open-port pattern
+# is OKD canonical (mirrors openshift-cloud-credential-operator webhook allow).
+#
+# NIST: SC-7, SC-7(5), AC-4
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: kyverno
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: kyverno
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow intra-namespace pod communication (bidirectional)
+# Kyverno controllers coordinate: background-controller shares admission decisions,
+# reports-controller aggregates PolicyReports, cleanup-controller reads shared state.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: kyverno
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# Allow egress to Kubernetes API server (port 6443)
+# All kyverno controllers watch/patch ClusterPolicies, ClusterPolicyReports,
+# resources under admission review, and CRDs via kube-API.
+# OKD canonical pattern — no destination restriction, port 6443 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: kyverno
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6443
+          protocol: TCP
+---
+# Allow ingress for admission webhook (port 9443)
+# kube-apiserver calls kyverno-admission-controller on port 9443 for
+# MutatingWebhookConfiguration and ValidatingWebhookConfiguration.
+# OKD canonical pattern: allow any source on webhook port (kube-apiserver
+# has no NetworkPolicy-friendly label for podSelector use).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webhook-ingress
+  namespace: kyverno
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 9443
+          protocol: TCP
+---
+# Allow egress to image registries (ports 443 and 8443)
+# verify-image-signatures ClusterPolicy pulls image manifests and cosign
+# signature artifacts from:
+#   - harbor.208.haist.farm (port 443)
+#   - mirror.208.haist.farm:8443 (port 8443)
+# No IP restriction — same pattern as allow-kube-api-egress (port only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-image-registry-egress
+  namespace: kyverno
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 8443
+          protocol: TCP

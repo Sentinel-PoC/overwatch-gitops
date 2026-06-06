@@ -1,0 +1,147 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Replace=true
+    policies.kyverno.io/title: Verify Image Signatures
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Verify cosign signatures on our own images, scoped to the signed
+      harbor/mirror sentinel/* projects. System namespaces (kube-*, openshift-*)
+      excluded. ENFORCE flip applied under SEC-103 (operator-gated go 2026-06-05);
+      fail-open (failurePolicy: Ignore) preserved — fail-closed is SEC-104.
+      SCOPE NOTE (SEC-103, 2026-06-05): the SEC-101 widening to imageReferences:
+      "*" is reverted to sentinel/* here. The "*" scope never took effect live
+      (a 6-day GitOps drift held live at sentinel/*); applying "*" under Enforce
+      would deny admission to ~33 unsigned third-party images still running
+      directly from docker.io/ghcr.io/quay.io/registry.istio.io/registry.k8s.io
+      (cert-manager, istio, kyverno, external-secrets, harbor, loki, postgres,
+      nfs-provisioner). Widening to "*" is gated on first mirroring+signing
+      those images through Harbor (SEC-87 campaign).
+      Maps to NIST 800-53 controls SI-7, CM-14, SA-12.
+      Configured fail-open (failurePolicy: Ignore) because Harbor is co-located
+      on the same OKD cluster — fail-closed creates cascading outage when Harbor
+      is unavailable. Background scanning provides compensating verification.
+      See OPS-114, SEC-41, SEC-87, SEC-101, SEC-103.
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Ignore
+  background: true
+  webhookTimeoutSeconds: 10
+  rules:
+    - name: verify-harbor-image-signature
+      # SEC-41 (2026-04-24): namespace allowlist removed; coverage is now
+      # driven by imageReferences scoping.
+      # SEC-103 (2026-06-05): scope is sentinel/* (our signed images). The
+      # SEC-101 "*" widening was reverted — it never applied live and "*"+Enforce
+      # would block ~33 unsigned third-party images (see description). Re-widen
+      # only after those are mirrored+signed via Harbor (SEC-87).
+      # System namespaces (kube-*, openshift-*) explicitly excluded for safety.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - openshift
+                - openshift-apiserver
+                - openshift-apiserver-operator
+                - openshift-authentication
+                - openshift-authentication-operator
+                - openshift-cloud-controller-manager
+                - openshift-cloud-controller-manager-operator
+                - openshift-cloud-credential-operator
+                - openshift-cluster-csi-drivers
+                - openshift-cluster-machine-approver
+                - openshift-cluster-node-tuning-operator
+                - openshift-cluster-samples-operator
+                - openshift-cluster-storage-operator
+                - openshift-cluster-version
+                - openshift-config
+                - openshift-config-managed
+                - openshift-config-operator
+                - openshift-console
+                - openshift-console-operator
+                - openshift-console-user-settings
+                - openshift-controller-manager
+                - openshift-controller-manager-operator
+                - openshift-dns
+                - openshift-dns-operator
+                - openshift-etcd
+                - openshift-etcd-operator
+                - openshift-gitops
+                - openshift-image-registry
+                - openshift-infra
+                - openshift-ingress
+                - openshift-ingress-canary
+                - openshift-ingress-operator
+                - openshift-insights
+                - openshift-kube-apiserver
+                - openshift-kube-apiserver-operator
+                - openshift-kube-controller-manager
+                - openshift-kube-controller-manager-operator
+                - openshift-kube-scheduler
+                - openshift-kube-scheduler-operator
+                - openshift-kube-storage-version-migrator
+                - openshift-kube-storage-version-migrator-operator
+                - openshift-machine-api
+                - openshift-machine-config-operator
+                - openshift-marketplace
+                - openshift-monitoring
+                - openshift-multus
+                - openshift-network-diagnostics
+                - openshift-network-operator
+                - openshift-node
+                - openshift-oauth-apiserver
+                - openshift-openstack-infra
+                - openshift-operator-lifecycle-manager
+                - openshift-operators
+                - openshift-ovirt-infra
+                - openshift-route-controller-manager
+                - openshift-sdn
+                - openshift-service-ca
+                - openshift-service-ca-operator
+                - openshift-user-workload-monitoring
+                - openshift-vsphere-infra
+      verifyImages:
+        # SEC-103 (2026-06-05): scoped to the signed sentinel/* projects in
+        # harbor and mirror. These carry the sentinel cosign signature; FAIL=0
+        # in background scan, so Enforce is safe here. Third-party images
+        # (docker.io/ghcr.io/quay.io/…) are intentionally out of scope until
+        # mirrored+signed via Harbor (SEC-87); enforcing on them now would deny
+        # admission cluster-wide.
+        - imageReferences:
+            # mirror.208.haist.farm:8443/sentinel/* intentionally omitted: the
+            # pull-through mirror is empty/unwired (OPS-1076/1077), so it verifies
+            # nothing today and a non-live glob causes a non-convergeable ArgoCD
+            # OutOfSync. Re-add when the mirror is wired (SEC-87 / SEC-104).
+            - "harbor.208.haist.farm/sentinel/*"
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEeoZ6uG2ZJhmfixK+kqpiKQlWwJIb
+                      n/B7orsb2bAk8l/mlmsd1jebbdtNLoG1F6qgbvqOXLDwwSqlS/qXR5kUrg==
+                      -----END PUBLIC KEY-----
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
+          required: true
+          mutateDigest: true
+          verifyDigest: true
+          useCache: true
+          imageRegistryCredentials:
+            secrets:
+              - harbor-pull-secret
+              - mirror-pull-secret

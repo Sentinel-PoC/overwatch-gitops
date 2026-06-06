@@ -1,0 +1,38 @@
+---
+# Console API + Keycloak via Pangolin/Traefik (192.168.12.168:443)
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: pangolin-services
+  namespace: haists-website
+spec:
+  hosts:
+    - console-sec.208.haist.farm
+    - auth.208.haist.farm
+    - auth-next.208.haist.farm
+  addresses:
+    - 192.168.12.168
+  ports:
+    - number: 443
+      name: tls
+      protocol: TLS
+  location: MESH_EXTERNAL
+  resolution: STATIC
+  endpoints:
+    - address: 192.168.12.168
+---
+# Mailjet SMTP (contact form email delivery)
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: mailjet-smtp
+  namespace: haists-website
+spec:
+  hosts:
+    - in-v3.mailjet.com
+  ports:
+    - number: 587
+      name: smtp
+      protocol: TCP
+  location: MESH_EXTERNAL
+  resolution: DNS

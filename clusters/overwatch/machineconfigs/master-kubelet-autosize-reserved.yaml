@@ -1,0 +1,18 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: KubeletConfig
+metadata:
+  name: master-autosize-reserved
+  annotations:
+    # OPS-1117: SystemMemoryExceedsReservation on master-1/master-2.
+    # Default kubelet system-reserved (~1.2 GB) is undersized for compact
+    # master+worker nodes. autoSizingReserved computes per-node systemReserved
+    # from a capacity formula (approx 3.5 GB on 32 GB master-1, more on master-2)
+    # instead of a hand-guessed literal, which right-sizes each master individually.
+    # ArgoCD does NOT manage KubeletConfig (excluded from default AppProject
+    # clusterResourceWhitelist) -- applied imperatively via oc apply.
+    # MCO triggers a rolling reboot: masters reboot one at a time (maxUnavailable=1).
+spec:
+  autoSizingReserved: true
+  machineConfigPoolSelector:
+    matchLabels:
+      pools.operator.machineconfiguration.openshift.io/master: ""

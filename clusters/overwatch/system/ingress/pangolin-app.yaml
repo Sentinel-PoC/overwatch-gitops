@@ -1,0 +1,59 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pangolin-internal
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    chart: traefik
+    repoURL: harbor.208.haist.farm/sentinel
+    targetRevision: 26.0.0
+    helm:
+      skipCrds: true
+      parameters:
+      - name: providers.kubernetesCRD.enabled
+        value: "false"
+      - name: providers.kubernetesIngress.enabled
+        value: "false"
+      - name: service.type
+        value: NodePort
+      - name: ports.web.nodePort
+        value: "30080"
+      - name: ports.websecure.nodePort
+        value: "30443"
+      - name: deployment.replicas
+        value: "2"
+      - name: securityContext.capabilities.drop[0]
+        value: ALL
+      - name: securityContext.runAsNonRoot
+        value: "true"
+      - name: securityContext.runAsUser
+        value: "1001"
+      - name: podSecurityContext.fsGroup
+        value: "1001"
+      - name: rbac.namespaced
+        value: "true"
+      - name: ingressClass.enabled
+        value: "false"
+      - name: resources.requests.cpu
+        value: 100m
+      - name: resources.requests.memory
+        value: 128Mi
+      - name: resources.limits.cpu
+        value: 500m
+      - name: resources.limits.memory
+        value: 256Mi
+      valuesObject:
+        deployment:
+          podAnnotations:
+            sidecar.istio.io/inject: "false"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pangolin-internal
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

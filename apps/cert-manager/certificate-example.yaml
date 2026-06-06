@@ -1,0 +1,39 @@
+---
+# OPS-518 — Example Certificate resource (Pattern reference)
+#
+# This Certificate is a PROOF-OF-CONCEPT for the cert-manager + Vault Issuer pattern.
+# It requests a cert for "certmgr-test.208.haist.farm" from the Vault ClusterIssuer.
+#
+# After cert-manager is installed and vault-issuer is Ready, ArgoCD will apply this.
+# Check its status:
+#   oc get certificate cert-manager-test-cert -n cert-manager -o jsonpath='{.status.conditions}'
+#   oc get secret cert-manager-test-tls -n cert-manager -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text
+#
+# Once this Certificate reaches Ready=True, acceptance criterion (4) is satisfied:
+# "at least one existing cert migrated to Certificate resource with automated renewal verified."
+#
+# To migrate production workload certs (e.g., harbor, keycloak):
+#   1. Create Certificate resource referencing vault-issuer
+#   2. Set secretName to the existing TLS secret name (cert-manager will update it)
+#   3. Remove the manually-deployed cert (cert-manager will own renewal)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cert-manager-test-cert
+  namespace: cert-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  secretName: cert-manager-test-tls
+  duration: 2160h    # 90 days
+  renewBefore: 360h  # 15 days before expiry
+  subject:
+    organizations:
+      - HAIST IT Consulting
+  commonName: certmgr-test.208.haist.farm
+  dnsNames:
+    - certmgr-test.208.haist.farm
+  issuerRef:
+    name: vault-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io

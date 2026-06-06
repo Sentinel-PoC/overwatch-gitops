@@ -1,0 +1,95 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: sentinel-ops-sandbox
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(8)"
+    compliance.sentinel/description: >
+      Sandbox etcd-backup CronJob. Mirrors prod (apps/sentinel-ops/cronjobs/etcd-backup.yaml)
+      with sandbox-specific env overrides: VAULT_TRANSIT_KEY=etcd-backup-sandbox,
+      MINIO_BUCKET=etcd-backups-sandbox, VAULT_TOKEN from static Secret (OPS-289 bypass —
+      k8s-auth not wired yet for sandbox), MinIO scoped user etcd-backup-sandbox-9wj2j7mu.
+      No verify CronJob, no minio-replicate (sandbox is expendable by design — OPS-278).
+      Pod hardening identical to prod: runAsNonRoot, RuntimeDefault seccomp,
+      readOnlyRootFilesystem, drop ALL caps, /tmp emptyDir (AC-6, CM-2).
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            # Required by allow-etcd-backup-egress NetworkPolicy podSelector
+            app.kubernetes.io/name: etcd-backup
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          serviceAccountName: etcd-backup-sa
+          restartPolicy: Never
+          # Pod hardening identical to prod (OPS-241):
+          # runAsNonRoot, RuntimeDefault seccomp, no hostPID/privileged/hostPath.
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: etcd-backup
+              image: harbor.208.haist.farm/sentinel/sentinel-ops@sha256:838e68fbed676320273e70cb12c698d6076780e2f3a2389e17195d4d64a49049
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "/opt/etcd-backup/etcd-backup.sh"]
+              env:
+                - name: VAULT_ADDR
+                  value: "https://vault.208.haist.farm"
+                # VAULT_TOKEN bypass: k8s-auth skipped when VAULT_TOKEN set in env.
+                # Static token injected from Secret etcd-backup-vault-creds (out-of-band).
+                # Remove and set VAULT_K8S_ROLE=etcd-backup-sandbox when OPS-289 resolves.
+                - name: VAULT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: etcd-backup-vault-creds
+                      key: VAULT_TOKEN
+                - name: VAULT_TRANSIT_KEY
+                  value: "etcd-backup-sandbox"
+                - name: MINIO_BUCKET
+                  value: "etcd-backups-sandbox"
+                # MINIO_REPLICA explicitly empty: no replica in sandbox.
+                # Prevents verify-script from failing if accidentally invoked.
+                - name: MINIO_REPLICA
+                  value: ""
+              envFrom:
+                # MinIO endpoint + credentials for sandbox scoped user.
+                # Secret applied out-of-band — see secrets.README.md.
+                # Expected keys: MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT
+                - secretRef:
+                    name: ops-minio-sandbox-creds
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: scripts
+                  mountPath: /opt/etcd-backup
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: scripts
+              configMap:
+                name: etcd-backup-scripts
+                defaultMode: 0755

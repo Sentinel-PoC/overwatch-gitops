@@ -1,0 +1,23 @@
+---
+# ServiceMonitor for Tempo — OPS-519
+# Scrapes Tempo metrics from the observability namespace.
+# Tempo monolithic exposes /metrics on port 3100 (http-metrics).
+# Cluster Prometheus (openshift-monitoring) picks this up via
+# user-workload monitoring (apps/monitoring-overrides/cluster-monitoring-config.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tempo-metrics
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: tempo
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+      app.kubernetes.io/instance: tempo
+  endpoints:
+    - port: http-metrics
+      interval: 60s
+      path: /metrics

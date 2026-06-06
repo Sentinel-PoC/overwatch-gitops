@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: langfuse-backup
+  description: Langfuse backup CronJob — schedules periodic database exports to S3/MinIO
+  annotations:
+    backstage.io/kubernetes-namespace: langfuse-backup
+    argocd/app-name: langfuse-backup
+  tags:
+    - backup
+    - langfuse
+    - operations
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:langfuse

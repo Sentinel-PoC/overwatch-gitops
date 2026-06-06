@@ -1,0 +1,87 @@
+---
+# NetworkPolicy additions for Tempo in observability namespace.
+# OPS-519: Tempo monolithic mode — single pod, ports:
+#   3100 — HTTP (receiver + query frontend)
+#   4317 — OTLP gRPC receiver
+#   4318 — OTLP HTTP receiver
+#   9411 — Zipkin receiver
+#   14268 — Jaeger HTTP receiver (thrift)
+#   14250 — Jaeger gRPC receiver
+#   7946 — Memberlist gossip (single instance: unused but chart exposes it)
+#
+# The observability namespace already has a default-deny-all NetworkPolicy
+# (apps/loki/network-policies.yaml) and allow-dns, allow-same-namespace,
+# allow-minio-egress, allow-kube-api-egress, and allow-loki-ingress policies.
+#
+# The existing allow-same-namespace policy covers intra-namespace Tempo traffic.
+# The existing allow-minio-egress covers Tempo S3 writes to MinIO.
+# The existing allow-dns covers DNS resolution.
+#
+# New policies needed:
+#   1. Allow OTLP ingress from all namespaces (OpenTelemetry Collector push)
+#   2. Allow Tempo query HTTP ingress from monitoring namespace (Grafana)
+#
+# NIST: SC-7, SC-7(5), AC-4
+---
+# Allow OTLP gRPC + HTTP ingress from all namespaces to Tempo
+# OpenTelemetry Collector (alloy or otelcol) runs across multiple namespaces
+# and pushes spans to Tempo on 4317 (gRPC) and 4318 (HTTP).
+# During dual-run with Jaeger: Alloy dual-exports to both Jaeger and Tempo.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tempo-otlp-ingress
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/issue: OPS-519
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: 4317
+          protocol: TCP
+        - port: 4318
+          protocol: TCP
+        - port: 3100
+          protocol: TCP
+        - port: 9411
+          protocol: TCP
+        - port: 14268
+          protocol: TCP
+        - port: 14250
+          protocol: TCP
+---
+# Allow Prometheus scrape of Tempo metrics (port 3100 /metrics)
+# Cluster monitoring Prometheus scrapes from openshift-monitoring namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tempo-metrics-scrape
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/issue: OPS-519
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-monitoring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 3100
+          protocol: TCP

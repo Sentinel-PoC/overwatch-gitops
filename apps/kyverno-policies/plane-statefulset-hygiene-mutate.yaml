@@ -1,0 +1,135 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: plane-statefulset-hygiene-mutate
+  annotations:
+    policies.kyverno.io/title: plane StatefulSet Hygiene — Labels + Resource Limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Adds app.kubernetes.io/name label and resource limits to the three plane-ce
+      sub-chart StatefulSets (minio, rabbitmq, redis-wl). The plane-ce 1.4.1 Helm
+      chart does not set these fields. K8s 1.34 SSA cannot patch them for existing
+      StatefulSets (OPS-785). This policy uses mutateExisting (Update API) as the
+      correct alternative mechanism (OPS-858).
+    nist-controls: CM-8, SC-6
+    # Related issues
+    ops-858: "Design + inert manifests PR"
+    ops-878: "Prerequisite: fix kustomization.yaml dangling refs"
+    ops-880: "Execution: Audit phase wire-up (this PR)"
+spec:
+  # Audit mode — PolicyReports only, no enforcement.
+  # After verifying mutations are applied and correct, flip to Enforce
+  # in a separate PR per OPS-858 §11 execution gate.
+  validationFailureAction: Audit
+  background: true
+  mutateExistingOnPolicyUpdate: true
+  rules:
+    # ──────────────────────────────────────────────────────────
+    # plane-minio-wl: label + 1Gi memory limit
+    # ──────────────────────────────────────────────────────────
+    - name: mutate-plane-minio-labels-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - StatefulSet
+              names:
+                - plane-minio-wl
+              namespaces:
+                - plane
+      mutate:
+        targets:
+          - apiVersion: apps/v1
+            kind: StatefulSet
+            name: plane-minio-wl
+            namespace: plane
+        patchStrategicMerge:
+          metadata:
+            labels:
+              app.kubernetes.io/name: plane-minio
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: plane-minio
+                    resources:
+                      limits:
+                        memory: 1Gi
+                        cpu: 500m
+                      requests:
+                        memory: 256Mi
+                        cpu: 50m
+
+    # ──────────────────────────────────────────────────────────
+    # plane-rabbitmq-wl: label + 512Mi memory limit
+    # ──────────────────────────────────────────────────────────
+    - name: mutate-plane-rabbitmq-labels-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - StatefulSet
+              names:
+                - plane-rabbitmq-wl
+              namespaces:
+                - plane
+      mutate:
+        targets:
+          - apiVersion: apps/v1
+            kind: StatefulSet
+            name: plane-rabbitmq-wl
+            namespace: plane
+        patchStrategicMerge:
+          metadata:
+            labels:
+              app.kubernetes.io/name: plane-rabbitmq
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: plane-rabbitmq
+                    resources:
+                      limits:
+                        memory: 512Mi
+                        cpu: 500m
+                      requests:
+                        memory: 128Mi
+                        cpu: 50m
+
+    # ──────────────────────────────────────────────────────────
+    # plane-redis-wl: label + 512Mi memory limit
+    # ──────────────────────────────────────────────────────────
+    - name: mutate-plane-redis-labels-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - StatefulSet
+              names:
+                - plane-redis-wl
+              namespaces:
+                - plane
+      mutate:
+        targets:
+          - apiVersion: apps/v1
+            kind: StatefulSet
+            name: plane-redis-wl
+            namespace: plane
+        patchStrategicMerge:
+          metadata:
+            labels:
+              app.kubernetes.io/name: plane-redis
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: plane-redis
+                    resources:
+                      limits:
+                        memory: 512Mi
+                        cpu: 500m
+                      requests:
+                        memory: 128Mi
+                        cpu: 50m

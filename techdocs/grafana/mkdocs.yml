@@ -1,0 +1,12 @@
+site_name: Grafana Operations
+site_description: Operational runbook for Project Sentinel Grafana observability platform
+nav:
+  - Overview: index.md
+  - Deployment: deployment.md
+  - Dashboards: dashboards.md
+  - Datasources: datasources.md
+  - Alerting: alerting.md
+  - Troubleshooting: troubleshooting.md
+  - Compliance: compliance.md
+plugins:
+  - techdocs-core

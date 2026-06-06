@@ -1,0 +1,88 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: harbor
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: harbor
+      targetRevision: 1.18.2
+      helm:
+        releaseName: harbor
+        valueFiles:
+          - $values/clusters/overwatch/apps/harbor/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/harbor
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: harbor
+  ignoreDifferences:
+    # OPS-647: Narrowed from broad .spec.data[]?.remoteRef + .spec.target masks to
+    # only the specific sub-fields ESO adds as CRD defaults after creation.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+    - kind: Secret
+      name: harbor-core
+      jqPathExpressions:
+        - .data
+    - kind: Secret
+      name: harbor-jobservice
+      jqPathExpressions:
+        - .data
+    - kind: Secret
+      name: harbor-registry
+      jqPathExpressions:
+        - .data
+    - kind: Secret
+      name: harbor-registry-htpasswd
+      jqPathExpressions:
+        - .data
+    - group: apps
+      kind: Deployment
+      name: harbor-core
+      jqPathExpressions:
+        - .spec.template.spec.containers[].env
+    - group: apps
+      kind: Deployment
+      name: harbor-jobservice
+      jqPathExpressions:
+        - .spec.template.spec.containers[].env
+    - group: apps
+      kind: Deployment
+      name: harbor-registry
+      jqPathExpressions:
+        - .spec.template.spec.containers[].env
+    - group: apps
+      kind: Deployment
+      name: harbor-database
+      jqPathExpressions:
+        - .spec.template.spec.containers[].env
+        - .spec.template.metadata.annotations
+    # Kyverno's verify-images policy stamps each verified Deployment with a
+    # kyverno.io/verify-images annotation containing the verification result.
+    # Runtime controller mutation — cannot be in git. Applies to all Harbor
+    # Deployments since Kyverno verifies every image pulled through harbor.
+    - group: apps
+      kind: Deployment
+      jqPathExpressions:
+        - .metadata.annotations["kyverno.io/verify-images"]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

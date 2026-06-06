@@ -1,0 +1,41 @@
+---
+# Console API + Keycloak via Pangolin/Traefik (192.168.12.168:443)
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: pangolin-services
+  namespace: haists-website-dev
+spec:
+  hosts:
+    - console-sec.208.haist.farm
+    - auth.208.haist.farm
+  addresses:
+    - 192.168.12.168
+  ports:
+    - number: 443
+      name: tls
+      protocol: TLS
+  location: MESH_EXTERNAL
+  resolution: STATIC
+  endpoints:
+    - address: 192.168.12.168
+---
+# Matrix bot on iac-control (HTTP direct, port 9095)
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: matrix-bot
+  namespace: haists-website-dev
+spec:
+  hosts:
+    - matrix-bot.internal
+  addresses:
+    - 10.0.0.1
+  ports:
+    - number: 9095
+      name: tcp-matrix-bot
+      protocol: TCP
+  location: MESH_EXTERNAL
+  resolution: STATIC
+  endpoints:
+    - address: 10.0.0.1

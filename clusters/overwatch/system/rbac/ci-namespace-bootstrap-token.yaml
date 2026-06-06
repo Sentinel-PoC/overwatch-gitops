@@ -1,0 +1,22 @@
+---
+# OPS-883 / OPS-1107 — Long-lived SA token for ci-namespace-bootstrap
+#
+# OKD/K8s auto-populates .data.token (and .data.ca.crt) when the secret
+# type is kubernetes.io/service-account-token and the annotation names a
+# valid ServiceAccount. The token does not expire automatically.
+#
+# This token is used to build a kubeconfig stored in Vault at:
+#   secret/iac/ci-namespace-bootstrap.kubeconfig (field: kubeconfig)
+#
+# CI retrieves the kubeconfig at runtime in namespace-bootstrap.yml.
+# The kubeconfig is NOT committed to git — only the RBAC objects are.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ci-namespace-bootstrap-token
+  namespace: openshift-gitops
+  annotations:
+    kubernetes.io/service-account.name: ci-namespace-bootstrap
+    ops.haist.farm/issue: "OPS-883/OPS-1107"
+    ops.haist.farm/purpose: "Long-lived SA token for apply-namespaces CI kubeconfig"
+type: kubernetes.io/service-account-token

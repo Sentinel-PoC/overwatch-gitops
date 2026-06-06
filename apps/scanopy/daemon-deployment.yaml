@@ -1,0 +1,114 @@
+---
+# OPS-398: Scanopy daemon Deployment.
+# Requires hostNetwork:true + NET_RAW/NET_ADMIN for raw network scanning (ARP, LLDP,
+# SNMP, ICMP). SCC scanopy-daemon-privileged (scc.yaml) grants these permissions.
+# SEC-112: replaced privileged:true with explicit capabilities (NET_RAW + NET_ADMIN).
+# Pattern mirrors apps/falco/daemonset.yaml + adds hostNetwork.
+#
+# Image: harbor.208.haist.farm/sentinel/scanopy-daemon@sha256:ebbc8afbf749506d6337d8d0089415e75fd18e913e887bec531998c88b133186
+# Mirrored and signed to Harbor in OPS-1085 (2026-05-30).
+#
+# The daemon connects to the server on port 60072. With hostNetwork:true, the
+# daemon uses the node's network stack and reaches the server via ClusterIP service
+# DNS (scanopy-server.scanopy.svc.cluster.local:60072).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scanopy-daemon
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/instance: scanopy
+    app.kubernetes.io/component: daemon
+spec:
+  # replicas: 0 until OPS-1123 relocates daemon to a 192.168.12.0/24 host.
+  # In-cluster daemon (hostNetwork on OKD nodes) can only reach 10.0.0.0/24,
+  # which is outside the authorized scan scope (192.168.12.0/24 only).
+  # Running it would ARP-sweep the cluster node network — not authorized.
+  # Configmap + deployment manifest are preserved intact for OPS-1123 handoff.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scanopy
+      app.kubernetes.io/component: daemon
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scanopy
+        app.kubernetes.io/instance: scanopy
+        app.kubernetes.io/component: daemon
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      serviceAccountName: scanopy-daemon
+      # OPS-1122: Disable K8s service link env var injection (same reason as server).
+      # Prevents SCANOPY_DAEMON_PORT=tcp://... conflict with SCANOPY_ config prefix.
+      enableServiceLinks: false
+      # hostNetwork required for raw packet capture (ARP, LLDP, ICMP).
+      # Without it, the daemon cannot see the physical network interface.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: scanopy-daemon
+          image: harbor.208.haist.farm/sentinel/scanopy-daemon@sha256:ebbc8afbf749506d6337d8d0089415e75fd18e913e887bec531998c88b133186
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            # SEC-112: drop privileged:true; use explicit minimal capabilities.
+            # Network discovery (ARP, LLDP, ICMP) requires raw packet access:
+            #   NET_RAW  — raw socket creation, ICMP ping, ARP sweeps
+            #   NET_ADMIN — interface config, promiscuous mode, LLDP/SNMP
+            # SCC scanopy-daemon-privileged (scc.yaml) already lists these in
+            # allowedCapabilities. privileged:true is not needed — it was set
+            # as a shortcut but granted far more than necessary.
+            # Ref: OCI label "network discovery agent"; hostNetwork:true preserved.
+            privileged: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_RAW
+                - NET_ADMIN
+          env:
+            - name: SCANOPY_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: scanopy-daemon-config
+                  key: SCANOPY_LOG_LEVEL
+            # OPS-1122: Interface scope restriction — limits ARP scanning to named interface.
+            # Prevents daemon from scanning non-platform VLANs per operator scope decision.
+            # Update value when daemon is moved out-of-cluster (OPS-1122 Phase 2).
+            - name: SCANOPY_INTERFACES
+              valueFrom:
+                configMapKeyRef:
+                  name: scanopy-daemon-config
+                  key: SCANOPY_INTERFACES
+            # Daemon registers with the server at this URL.
+            # Uses ClusterFirstWithHostNet DNS to resolve service DNS.
+            - name: SCANOPY_SERVER_URL
+              value: "http://scanopy-server.scanopy.svc.cluster.local:60072"
+          ports:
+            - name: health
+              containerPort: 60073
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 60073
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 60073
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

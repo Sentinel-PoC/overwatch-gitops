@@ -1,0 +1,51 @@
+---
+# OPS-518 — trust-manager ArgoCD Application
+#
+# trust-manager is distributed as a Helm chart by the cert-manager project.
+# Chart: harbor.208.haist.farm/sentinel (cert-manager Helm repo).
+# Installed into cert-manager namespace alongside cert-manager operator.
+#
+# Source 1: trust-manager Helm chart (installs trust-manager + Bundle CRD)
+# Source 2: values ref from overwatch-gitops
+# Source 3: apps/trust-manager path — the vault-ca-bundle Bundle resource
+#
+# The Bundle CR (apps/trust-manager/bundle.yaml) distributes the Vault CA chain
+# to all namespaces as a ConfigMap keyed "ca-certificates.crt".
+#
+# PREREQUISITE: cert-manager must be installed first (cert-manager-app.yaml).
+# trust-manager's Bundle CRD comes from the Helm chart; the Bundle resource
+# requires the CRD to exist before ArgoCD can apply it.
+#
+# SkipDryRunOnMissingResource: required because Bundle CRD does not exist
+# until trust-manager chart installs on first sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: trust-manager
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: trust-manager
+      targetRevision: v0.12.0
+      helm:
+        releaseName: trust-manager
+        valueFiles:
+          - $values/apps/trust-manager/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/trust-manager
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true

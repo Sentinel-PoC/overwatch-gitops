@@ -1,0 +1,271 @@
+# Harbor Helm values for OKD deployment
+# Chart: harbor/harbor v1.18.2 (Harbor v2.14.2)
+# Storage: Filesystem on NFS PVCs (no MinIO)
+# Database: External raw PostgreSQL (NFS-compatible, no chart subchart)
+# TLS: Edge termination via OKD Route
+#
+# Image registry prefix overrides (added for CRI-O 1.34 short_name_mode=enforcing):
+# The harbor chart renders image refs as `<repository>:<tag>` with no registry field.
+# CRI-O 1.34 rejects unqualified `goharbor/*` refs (ImageInspectError).
+# Override each component's repository to include docker.io/ prefix.
+# This resolves to the same image — explicitly rather than relying on search-registry fallback.
+
+expose:
+  type: clusterIP
+  tls:
+    enabled: false
+  clusterIP:
+    name: harbor
+    ports:
+      httpPort: 80
+
+externalURL: https://harbor.208.haist.farm
+
+# Admin password from ExternalSecret
+existingSecretAdminPassword: harbor-credentials
+existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
+
+# Secret key from ExternalSecret
+existingSecretSecretKey: harbor-credentials
+
+persistence:
+  enabled: true
+  resourcePolicy: "keep"
+  persistentVolumeClaim:
+    registry:
+      storageClass: nfs-storage
+      size: 100Gi
+    jobservice:
+      jobLog:
+        storageClass: nfs-storage
+        size: 1Gi
+    trivy:
+      storageClass: nfs-storage
+      size: 5Gi
+  imageChartStorage:
+    disableredirect: true
+    type: filesystem
+    filesystem:
+      rootdirectory: /storage
+
+# External PostgreSQL (raw deployment, NFS-compatible)
+database:
+  type: external
+  external:
+    host: harbor-database
+    port: "5432"
+    username: harbor
+    coreDatabase: registry
+    existingSecret: harbor-database
+    sslmode: "disable"
+
+# Internal Redis (chart subchart — works with kyverno-anyuid SCC)
+redis:
+  type: internal
+  internal:
+    serviceAccountName: harbor-redis
+    image:
+      repository: docker.io/goharbor/redis-photon
+    podAnnotations:
+      backstage.io/component: harbor
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# Nginx reverse proxy (required for clusterIP expose type)
+nginx:
+  serviceAccountName: harbor
+  image:
+    repository: docker.io/goharbor/nginx-photon
+  podAnnotations:
+    backstage.io/component: harbor
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+core:
+  serviceAccountName: harbor
+  image:
+    repository: docker.io/goharbor/harbor-core
+  # Hold application until istio-proxy sidecar is Ready so init containers
+  # can reach harbor-database through the mesh (AuthzPolicy deny-all requires
+  # the sidecar to be present for named ALLOW rules to evaluate).
+  # excludeOutboundPorts retained for compatibility with any pre-sidecar probe.
+  podAnnotations:
+    backstage.io/component: harbor
+    proxy.istio.io/config: |
+      holdApplicationUntilProxyStarts: true
+    traffic.sidecar.istio.io/excludeOutboundPorts: "5432"
+  # OPS-114: wait for database to be fully ready (not just TCP open)
+  # pg_isready verifies PostgreSQL is accepting connections, not just that
+  # the port is open. TCP checks pass during PG recovery when connections
+  # are immediately reset, causing harbor-core FATAL on startup.
+  initContainers:
+    - name: wait-for-db
+      image: public.ecr.aws/docker/library/postgres:16.13-alpine3.23
+      command:
+        - bash
+        - -c
+        - |
+          echo "Waiting for PostgreSQL to accept connections..."
+          until pg_isready -h harbor-database -p 5432 -U harbor -d registry -t 5; do
+            echo "PostgreSQL not ready — retrying in 3s..."
+            sleep 3
+          done
+          echo "PostgreSQL is accepting connections."
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+portal:
+  serviceAccountName: harbor
+  image:
+    repository: docker.io/goharbor/harbor-portal
+  podAnnotations:
+    backstage.io/component: harbor
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+registry:
+  serviceAccountName: harbor
+  podAnnotations:
+    backstage.io/component: harbor
+  relativeurls: true
+  registry:
+    image:
+      repository: docker.io/goharbor/registry-photon
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+  controller:
+    image:
+      repository: docker.io/goharbor/harbor-registryctl
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+jobservice:
+  serviceAccountName: harbor
+  image:
+    repository: docker.io/goharbor/harbor-jobservice
+  # OPS-266: Hold main container until istio-proxy sidecar is Ready.
+  # The wait-for-core init container (OPS-114) was removed: init containers run
+  # before the Istio sidecar has mesh identity, so their TCP traffic is blocked
+  # by the harbor-namespace deny-all AuthorizationPolicy regardless of
+  # holdApplicationUntilProxyStarts (that flag delays APPLICATION start, not
+  # initContainers). Harbor jobservice handles core unavailability via retries
+  # in the main container (readinessProbe /api/v1/stats, initialDelaySeconds 20).
+  podAnnotations:
+    backstage.io/component: harbor
+    proxy.istio.io/config: |
+      holdApplicationUntilProxyStarts: true
+    traffic.sidecar.istio.io/excludeOutboundPorts: "8080"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+trivy:
+  enabled: true
+  serviceAccountName: harbor
+  image:
+    repository: docker.io/goharbor/trivy-adapter-photon
+  podAnnotations:
+    backstage.io/component: harbor
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+exporter:
+  serviceAccountName: harbor
+  image:
+    repository: docker.io/goharbor/harbor-exporter
+  podAnnotations:
+    backstage.io/component: harbor
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+metrics:
+  enabled: true
+  core:
+    path: /metrics
+    port: 8001
+  registry:
+    path: /metrics
+    port: 8001
+  exporter:
+    path: /metrics
+    port: 8001
+
+# =============================================================================
+# OPS-605 Phase 3 — OIDC migration: Keycloak → Authentik
+# =============================================================================
+# Harbor OIDC is runtime-configured via the Harbor admin API (not Helm values).
+# The harbor-oidc ExternalSecret (apps/harbor/external-secrets.yaml) pre-stages
+# credentials for BOTH providers so the final cutover requires no secret changes.
+#
+# CURRENT ACTIVE PROVIDER: Keycloak
+#   Issuer:    https://auth.208.haist.farm/realms/sentinel
+#   Client ID: harbor
+#
+# STAGED PROVIDER: Authentik (ready to activate — no further Vault seeding needed)
+#   Metadata:  https://auth-next.208.haist.farm/application/o/harbor/.well-known/openid-configuration
+#   Client ID: (from harbor-oidc secret key OIDC_AUTHENTIK_CLIENT_ID)
+#
+# To flip Harbor to Authentik, operator runs (or opens a follow-up PR with a Job):
+#   curl -u "admin:${HARBOR_ADMIN_PASSWORD}" -X PUT \
+#     https://harbor.208.haist.farm/api/v2.0/configurations \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "auth_mode":           "oidc_auth",
+#       "oidc_name":           "Authentik",
+#       "oidc_endpoint":       "https://auth-next.208.haist.farm/application/o/harbor/",
+#       "oidc_client_id":      "<OIDC_AUTHENTIK_CLIENT_ID>",
+#       "oidc_client_secret":  "<OIDC_AUTHENTIK_CLIENT_SECRET>",
+#       "oidc_scope":          "openid,profile,email",
+#       "oidc_groups_claim":   "groups",
+#       "oidc_auto_onboard":   true,
+#       "oidc_user_claim":     "preferred_username"
+#     }'
+#
+# NOTE: Robot accounts (/v2/ API) are unaffected by OIDC provider changes.
+# CI pipelines (docker pull/push) continue working during and after the flip.
+# Only web UI login is affected. Warn users 24h in advance.
+# =============================================================================

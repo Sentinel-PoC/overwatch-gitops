@@ -1,0 +1,17 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: hello-world
+  description: Hello-world demo deployment in the demo namespace — used for smoke-testing mesh routing and ingress
+  annotations:
+    backstage.io/kubernetes-namespace: demo
+  tags:
+    - demo
+    - test
+    - overwatch
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: sentinel-platform

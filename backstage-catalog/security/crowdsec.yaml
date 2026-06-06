@@ -1,0 +1,16 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: crowdsec
+  description: Collaborative intrusion prevention system on pangolin-proxy
+  annotations:
+  tags:
+    - intrusion-prevention
+    - security
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

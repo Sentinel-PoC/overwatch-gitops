@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: prometheus
+  description: OKD built-in cluster monitoring stack managed by Cluster Monitoring Operator
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=prometheus
+    backstage.io/kubernetes-namespace: openshift-monitoring
+  tags:
+    - monitoring
+    - metrics
+    - system-component
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

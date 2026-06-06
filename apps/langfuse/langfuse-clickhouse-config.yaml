@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: langfuse-clickhouse-config
+  namespace: langfuse
+data:
+  backup-disk.xml: |
+    <clickhouse>
+      <storage_configuration>
+        <disks>
+          <backups>
+            <type>local</type>
+            <path>/var/lib/clickhouse/backups/</path>
+          </backups>
+        </disks>
+      </storage_configuration>
+      <backups>
+        <allowed_disk>backups</allowed_disk>
+        <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
+      </backups>
+    </clickhouse>
+  # OPS-306: disable the real-time query profiler globally. With the profiler
+  # firing every 1s by default, system.trace_log accumulated ~3 GiB/day under
+  # normal Langfuse load (OPS-304). Mounted into users.d/ — profile settings
+  # live in the user-config domain, not config.d/ where the rest of this map
+  # ends up.
+  # OPS-1115: also disable CPU-time profiler (query_profiler_cpu_time_period_ns)
+  # which fires independently and also writes to trace_log.
+  users-override.xml: |
+    <clickhouse>
+      <profiles>
+        <default>
+          <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+          <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+        </default>
+      </profiles>
+    </clickhouse>
+  # OPS-1115: cap system-log retention at 3 days via TTL (belt-and-suspenders
+  # against PVC fill recurrence — system.trace_log hit 40.9 GiB / 1.7B rows,
+  # system.text_log hit 25.5 GiB before operator truncated 2026-06-01).
+  # Mounted into config.d/ alongside override.xml.
+  system-logs-ttl.xml: |
+    <clickhouse>
+      <trace_log>
+        <database>system</database>
+        <table>trace_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </trace_log>
+      <text_log>
+        <database>system</database>
+        <table>text_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </text_log>
+      <metric_log>
+        <database>system</database>
+        <table>metric_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </metric_log>
+      <asynchronous_metric_log>
+        <database>system</database>
+        <table>asynchronous_metric_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </asynchronous_metric_log>
+      <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </query_log>
+      <query_thread_log>
+        <database>system</database>
+        <table>query_thread_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </query_thread_log>
+      <processors_profile_log>
+        <database>system</database>
+        <table>processors_profile_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </processors_profile_log>
+      <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+      </part_log>
+    </clickhouse>
+  override.xml: |
+    <clickhouse>
+      <!-- OPS-857: limit ClickHouse to 80% of the 4Gi cgroup ceiling (~3.2Gi)
+           so it cooperates with the memory limit and avoids OOM-kill. -->
+      <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+      <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <coordination_settings>
+          <operation_timeout_ms>10000</operation_timeout_ms>
+          <session_timeout_ms>30000</session_timeout_ms>
+        </coordination_settings>
+        <raft_configuration>
+          <server>
+            <id>1</id>
+            <hostname>localhost</hostname>
+            <port>9234</port>
+          </server>
+        </raft_configuration>
+      </keeper_server>
+      <remote_servers>
+        <default>
+          <shard>
+            <replica>
+              <host>localhost</host>
+              <port>9000</port>
+            </replica>
+          </shard>
+        </default>
+      </remote_servers>
+      <macros>
+        <shard>1</shard>
+        <replica>1</replica>
+        <cluster>default</cluster>
+      </macros>
+      <zookeeper>
+        <node>
+          <host>localhost</host>
+          <port>9181</port>
+        </node>
+      </zookeeper>
+    </clickhouse>

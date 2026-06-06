@@ -1,0 +1,43 @@
+---
+# OAuth/cluster — OKD cluster identity provider config.
+#
+# PATTERN: Single IdP — Authentik only.
+# Keycloak was removed in OPS-668 after OPS-661 verified preferred_username
+# mapping (mappingMethod:claim) correctly links existing OKD users to Authentik.
+# Users see a single "Sign in with authentik" button on the OKD login page.
+#
+# Authentik client credentials:
+#   clientID: y7GdFdrGjBTizbEJUHORlvSqnKbwKGFBOSrpqmez (not secret; stored in git)
+#   clientSecret: materialize via ExternalSecret → Secret/authentik-okd-secret
+#
+# Tracking: OPS-668 (remove keycloak), OPS-605 Phase 3 (original authentik add)
+# AppProject whitelist requirement: config.openshift.io/OAuth must be added
+# to clusterResourceWhitelist in apps/argocd/appproject-default.yaml AND
+# applied manually: oc apply -f apps/argocd/appproject-default.yaml
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+  - mappingMethod: claim
+    name: authentik
+    openID:
+      claims:
+        email:
+        - email
+        groups:
+        - groups
+        name:
+        - name
+        preferredUsername:
+        - preferred_username
+      clientID: y7GdFdrGjBTizbEJUHORlvSqnKbwKGFBOSrpqmez
+      clientSecret:
+        name: authentik-okd-secret
+      extraScopes:
+      - email
+      - profile
+      - groups
+      issuer: https://auth-next.208.haist.farm/application/o/oauth-openshift
+    type: OpenID

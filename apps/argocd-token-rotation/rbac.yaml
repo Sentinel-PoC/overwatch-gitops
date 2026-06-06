@@ -1,0 +1,35 @@
+# OPS-1003: RBAC for ArgoCD token rotation CronJob.
+#
+# ServiceAccount: argocd-rotation-sa
+#   - Used by the CronJob pod
+#   - No cluster permissions needed (all API calls are HTTPS via curl)
+#
+# SCC binding: anyuid
+#   Required for harbor.208.haist.farm/sentinel/alpine-tools:3.20
+#   (Alpine-based image may run as UID 0 on OKD)
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-rotation-sa
+  namespace: argocd-token-rotation
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1003
+---
+# SCC anyuid: required for Alpine images on OKD (same pattern as harbor-backup, OPS-481)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argocd-token-rotation-anyuid
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1003
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: argocd-rotation-sa
+    namespace: argocd-token-rotation

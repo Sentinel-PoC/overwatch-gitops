@@ -1,0 +1,38 @@
+---
+# ArgoCD server pod does NOT have an Istio sidecar (OpenShift GitOps operator
+# doesn't inject sidecars into the server deployment). Redis, repo-server, and
+# application-controller DO have sidecars with STRICT mTLS. Allow PERMISSIVE on
+# Redis port 6379 so the unmeshed ArgoCD server can connect for session/token
+# management and pub/sub notifications.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: argocd-redis-permissive
+  namespace: openshift-gitops
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openshift-gitops-redis
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    6379:
+      mode: PERMISSIVE
+---
+# Same issue for repo-server on port 8081: the unmeshed ArgoCD server calls
+# repo-server for git repo resolution, manifest generation, and sync operations.
+# Without PERMISSIVE, API-triggered syncs fail with "tls: certificate required".
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: argocd-repo-server-permissive
+  namespace: openshift-gitops
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openshift-gitops-repo-server
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    8081:
+      mode: PERMISSIVE

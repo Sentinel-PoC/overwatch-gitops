@@ -1,0 +1,204 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: sentinel-platform
+  description: Project Sentinel hybrid-cloud homelab platform
+  annotations:
+    backstage.io/source-location: url:https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops
+  tags:
+    - homelab
+    - hybrid-cloud
+    - okd
+spec:
+  owner: platform-team
+---
+# Location entries pointing to expanded catalog directories
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-security-catalog
+  description: Security components catalog (Keycloak, Kyverno, Vault, Wazuh, CrowdSec)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/security/keycloak.yaml
+    - ./backstage-catalog/security/kyverno.yaml
+    - ./backstage-catalog/security/vault-vm.yaml
+    - ./backstage-catalog/security/wazuh-vm.yaml
+    - ./backstage-catalog/security/crowdsec.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-monitoring-catalog
+  description: Monitoring components catalog (Grafana, Jaeger, Kiali, Thanos, Prometheus)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/monitoring/grafana.yaml
+    - ./backstage-catalog/monitoring/jaeger.yaml
+    - ./backstage-catalog/monitoring/kiali.yaml
+    - ./backstage-catalog/monitoring/thanos-querier.yaml
+    - ./backstage-catalog/monitoring/prometheus.yaml
+    - ./backstage-catalog/monitoring/unifi-exporter.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-mesh-catalog
+  description: Service mesh components catalog (Istio, mesh-config)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/mesh/istio-controlplane.yaml
+    - ./backstage-catalog/mesh/mesh-config.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-registry-catalog
+  description: Registry components catalog (Harbor, DefectDojo)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/registry/harbor.yaml
+    - ./backstage-catalog/registry/defectdojo.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-storage-catalog
+  description: Storage components catalog (NFS provisioner, MinIO)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/storage/nfs-provisioner.yaml
+    - ./backstage-catalog/storage/minio-cluster.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-networking-catalog
+  description: Networking components catalog (pangolin-internal, Traefik)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/networking/pangolin-internal.yaml
+    - ./backstage-catalog/networking/traefik-vm.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-applications-catalog
+  description: Application components catalog — all apps deployed from overwatch-gitops/apps/
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/applications/alloy.yaml
+    - ./backstage-catalog/applications/arch-vault-reader.yaml
+    - ./backstage-catalog/applications/backstage.yaml
+    - ./backstage-catalog/applications/cfwc-website.yaml
+    - ./backstage-catalog/applications/console.yaml
+    - ./backstage-catalog/applications/default-netpol.yaml
+    - ./backstage-catalog/applications/demo.yaml
+    - ./backstage-catalog/applications/falco.yaml
+    - ./backstage-catalog/applications/falcosidekick.yaml
+    - ./backstage-catalog/applications/haists-website.yaml
+    - ./backstage-catalog/applications/haists-website-dev.yaml
+    - ./backstage-catalog/applications/harbor-backup.yaml
+    - ./backstage-catalog/applications/harbor-pull-secrets.yaml
+    - ./backstage-catalog/applications/health-checker.yaml
+    - ./backstage-catalog/applications/hello-world.yaml
+    - ./backstage-catalog/applications/homepage.yaml
+    - ./backstage-catalog/applications/istio-cni.yaml
+    - ./backstage-catalog/applications/istio-ingress.yaml
+    - ./backstage-catalog/applications/keycloak-staging.yaml
+    - ./backstage-catalog/applications/kyverno-policies.yaml
+    - ./backstage-catalog/applications/langfuse.yaml
+    - ./backstage-catalog/applications/langfuse-backup.yaml
+    - ./backstage-catalog/applications/loki.yaml
+    - ./backstage-catalog/applications/matrix.yaml
+    - ./backstage-catalog/applications/matrix-backup.yaml
+    - ./backstage-catalog/applications/monitoring-overrides.yaml
+    - ./backstage-catalog/applications/netbox.yaml
+    - ./backstage-catalog/applications/ntfy.yaml
+    - ./backstage-catalog/applications/observability.yaml
+    - ./backstage-catalog/applications/openshift-authentication.yaml
+    - ./backstage-catalog/applications/overwatch-console.yaml
+    - ./backstage-catalog/applications/plane.yaml
+    - ./backstage-catalog/applications/plane-backup.yaml
+    - ./backstage-catalog/applications/reloader.yaml
+    - ./backstage-catalog/applications/sentinel-ops.yaml
+    - ./backstage-catalog/applications/sentinel-ops-sandbox.yaml
+    - ./backstage-catalog/applications/victorialogs.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-operators-catalog
+  description: Operator components catalog (ESO, Jaeger Operator, SAIL Operator)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/operators/external-secrets-operator.yaml
+    - ./backstage-catalog/operators/jaeger-operator.yaml
+    - ./backstage-catalog/operators/sail-operator.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-gitops-catalog
+  description: GitOps components catalog (ArgoCD, Forgejo)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/gitops/argocd.yaml
+    - ./backstage-catalog/gitops/forgejo-server.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-apis-catalog
+  description: API definitions (Vault, Forgejo, UniFi, ArgoCD, Grafana, Harbor, DefectDojo, Keycloak, Wazuh, MinIO, Prometheus, NetBox)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/apis/vault-secrets-api.yaml
+    - ./backstage-catalog/apis/forgejo-rest-api.yaml
+    - ./backstage-catalog/apis/unifi-network-api.yaml
+    - ./backstage-catalog/apis/argocd-api.yaml
+    - ./backstage-catalog/apis/grafana-api.yaml
+    - ./backstage-catalog/apis/harbor-api.yaml
+    - ./backstage-catalog/apis/defectdojo-api.yaml
+    - ./backstage-catalog/apis/keycloak-oidc-api.yaml
+    - ./backstage-catalog/apis/wazuh-api.yaml
+    - ./backstage-catalog/apis/minio-s3-api.yaml
+    - ./backstage-catalog/apis/prometheus-api.yaml
+    - ./backstage-catalog/apis/netbox-api.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-infrastructure-catalog
+  description: Infrastructure resources (OKD cluster, Proxmox, iac-control, config-server, seedbox-vm, UniFi)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/infrastructure/okd-cluster.yaml
+    - ./backstage-catalog/infrastructure/proxmox-cluster.yaml
+    - ./backstage-catalog/infrastructure/iac-control.yaml
+    - ./backstage-catalog/infrastructure/config-server.yaml
+    - ./backstage-catalog/infrastructure/seedbox-vm.yaml
+    - ./backstage-catalog/infrastructure/unifi-controller.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: sentinel-org-catalog
+  description: Organization entities (Users, Groups)
+spec:
+  type: url
+  targets:
+    - ./backstage-catalog/org/users.yaml
+    - ./backstage-catalog/org/groups.yaml

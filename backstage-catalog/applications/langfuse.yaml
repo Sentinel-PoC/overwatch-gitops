@@ -1,0 +1,25 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: langfuse
+  description: Langfuse LLM observability platform — traces, evals, and metrics for AI workloads
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=langfuse
+    backstage.io/kubernetes-namespace: langfuse
+    argocd/app-name: langfuse
+  links:
+    - url: https://langfuse.208.haist.farm
+      title: Langfuse Dashboard
+      icon: dashboard
+  tags:
+    - llm
+    - observability
+    - ai
+    - application
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

@@ -1,0 +1,4 @@
+---
+# No custom DestinationRules needed — all external services route through
+# Pangolin/Traefik on port 443 with TLS ServiceEntry (SNI passthrough).
+# Keycloak uses in-cluster HTTP (no TLS needed).

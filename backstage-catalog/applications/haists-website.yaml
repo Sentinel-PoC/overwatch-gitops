@@ -1,0 +1,26 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: haists-website
+  description: HAIST IT Consulting public website (www.haist.farm / www.208.haist.farm) deployed via Istio ingress
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=haists-website
+    backstage.io/kubernetes-namespace: haists-website
+    argocd/app-name: haists-website
+  links:
+    - url: https://www.208.haist.farm
+      title: HAIST Website (internal)
+      icon: web
+    - url: https://www.haist.farm
+      title: HAIST Website (public)
+      icon: web
+  tags:
+    - website
+    - application
+    - overwatch
+spec:
+  type: website
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

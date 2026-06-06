@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: langfuse-backup
+  labels:
+    # Isolated from langfuse namespace intentionally (OPS-481 Phase 4):
+    # a langfuse namespace wipe cannot take out backup tooling.
+    app.kubernetes.io/part-of: langfuse-backup
+    istio-injection: disabled

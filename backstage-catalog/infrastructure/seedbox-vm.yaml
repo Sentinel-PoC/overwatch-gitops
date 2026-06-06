@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: seedbox-vm
+  description: Seedbox VM (qBittorrent + gluetun VPN) providing download services
+  annotations:
+  links:
+    - url: https://qbit.208.haist.farm
+      title: qBittorrent Web UI
+      icon: dashboard
+  tags:
+    - media
+    - downloads
+    - vm-service
+    - overwatch
+spec:
+  type: vm
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-pve3

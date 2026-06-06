@@ -1,0 +1,17 @@
+---
+# OPS-518 — cert-manager OLM Subscription
+# Installs cert-manager from Community Operators (same catalog source as kyverno, falco).
+# Channel: stable — tracks cert-manager v1.x stable releases (currently v1.16.5).
+# installPlanApproval: Automatic — consistent with other platform operators.
+# No startingCSV specified; OLM selects currentCSV from the stable channel.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  channel: stable
+  name: cert-manager
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

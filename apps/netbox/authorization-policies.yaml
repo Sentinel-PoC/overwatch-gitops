@@ -1,0 +1,68 @@
+---
+# Default deny-all for netbox namespace
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: netbox
+spec: {}
+---
+# Allow ingress from Istio IngressGateway to netbox app
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: netbox
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: netbox
+      app.kubernetes.io/component: netbox
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway
+---
+# Allow netbox app/worker/housekeeping to reach PostgreSQL
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-netbox-to-postgresql
+  namespace: netbox
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/netbox/sa/netbox
+      to:
+        - operation:
+            ports:
+              - "5432"
+---
+# Allow netbox app/worker/housekeeping to reach Valkey
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-netbox-to-valkey
+  namespace: netbox
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/netbox/sa/netbox
+      to:
+        - operation:
+            ports:
+              - "6379"

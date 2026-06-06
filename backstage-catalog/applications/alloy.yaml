@@ -1,0 +1,20 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: alloy
+  description: Grafana Alloy log collector DaemonSet — ships pod logs to Loki and VictoriaLogs
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=alloy
+    backstage.io/kubernetes-namespace: logging
+    argocd/app-name: alloy
+  tags:
+    - logging
+    - observability
+    - collector
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

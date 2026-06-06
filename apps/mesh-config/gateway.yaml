@@ -1,0 +1,26 @@
+---
+# Istio Gateway for meshed services
+# Traefik terminates TLS, so IngressGateway accepts plain HTTP
+# Traffic flow: Traefik (TLS) -> HAProxy :8080 -> IngressGateway :8080 -> mTLS -> Pod
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: sentinel-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 8080
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*.208.haist.farm"
+        - "www.haist.farm"
+        # HAIST-25: client-demo subdomain (cfwc.dev.haist.farm and any future
+        # *.dev.haist.farm consulting demos). Wildcard so we don't have to
+        # touch this manifest per client.
+        - "cfwc.dev.haist.farm"
+        # OPS-1210: URL shortener
+        - "tiny.haist.farm"

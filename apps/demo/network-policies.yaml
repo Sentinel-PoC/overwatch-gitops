@@ -1,0 +1,47 @@
+# OPS-747: NetworkPolicy default-deny baseline for demo namespace.
+# Deferred from OPS-517 Phase 1b (2026-05-18).
+#
+# demo namespace is currently empty (no running pods as of 2026-05-18 audit).
+# Applying default-deny-all now ensures future workloads are protected
+# from the moment they're deployed, without requiring a separate remediation step.
+# DNS allow included so any pod can resolve services when workloads are added.
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: demo
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution (required for any future workload in this namespace)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: demo
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP

@@ -1,0 +1,107 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cfwc-website
+  namespace: cfwc-website
+  labels:
+    app.kubernetes.io/name: cfwc-website
+    app.kubernetes.io/instance: cfwc-website
+    app.kubernetes.io/component: website
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cfwc-website
+      app.kubernetes.io/instance: cfwc-website
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cfwc-website
+        app.kubernetes.io/instance: cfwc-website
+        app.kubernetes.io/component: website
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: cfwc-website
+      containers:
+        - name: cfwc-website
+          image: harbor.208.haist.farm/sentinel/cfwc-website@sha256:71c6e64f0d4d78cc5d973262d6db40ae3c9a16a69a26e26809671c07dc727b9f
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: cfwc-website-credentials
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cfwc-website
+  namespace: cfwc-website
+  labels:
+    app.kubernetes.io/name: cfwc-website
+    app.kubernetes.io/instance: cfwc-website
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: cfwc-website
+    app.kubernetes.io/instance: cfwc-website
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cfwc-website
+  namespace: cfwc-website
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cfwc-website
+      app.kubernetes.io/instance: cfwc-website

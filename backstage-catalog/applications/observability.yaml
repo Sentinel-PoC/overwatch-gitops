@@ -1,0 +1,17 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: observability-namespace
+  description: Observability namespace supplemental resources — Jaeger query HTTP service and related endpoints in the observability namespace
+  annotations:
+    backstage.io/kubernetes-namespace: observability
+  tags:
+    - observability
+    - platform
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

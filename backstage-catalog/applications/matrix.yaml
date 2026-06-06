@@ -1,0 +1,85 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: matrix
+  description: Matrix communication platform (Synapse + Element Web)
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=matrix
+    backstage.io/kubernetes-namespace: matrix
+    argocd/app-name: matrix
+    backstage.io/techdocs-ref: dir:.
+  links:
+    - url: https://matrix.208.haist.farm
+      title: Matrix (Element Web)
+      icon: dashboard
+  tags:
+    - communication
+    - messaging
+    - matrix
+    - application
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:matrix-postgresql
+    - component:keycloak
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: matrix-synapse
+  description: Matrix Synapse homeserver
+  annotations:
+    backstage.io/kubernetes-namespace: matrix
+    argocd/app-name: matrix
+  tags:
+    - matrix
+    - homeserver
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  subcomponentOf: matrix
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: matrix-element-web
+  description: Element Web client for Matrix
+  annotations:
+    backstage.io/kubernetes-namespace: matrix
+    argocd/app-name: matrix
+  tags:
+    - matrix
+    - web-client
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  subcomponentOf: matrix
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: matrix-postgresql
+  description: PostgreSQL database backend for Matrix Synapse
+  annotations:
+    backstage.io/kubernetes-namespace: matrix
+    argocd/app-name: matrix
+  tags:
+    - database
+    - postgresql
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

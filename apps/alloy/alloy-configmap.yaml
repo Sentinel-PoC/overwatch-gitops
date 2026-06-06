@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/component: log-shipper
+data:
+  config.alloy: |
+    // Kubernetes pod log collection via API (no hostPath, no SELinux issues)
+    loki.source.kubernetes "okd_pods" {
+      targets    = discovery.kubernetes.pods.targets
+      forward_to = [loki.write.victorialogs.receiver]
+    }
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    loki.write "victorialogs" {
+      endpoint {
+        url = "http://victorialogs.logging.svc.cluster.local:9428/insert/loki/api/v1/push"
+      }
+    }
+
+    // OPS-519: OTLP trace receiver — accepts spans from instrumented workloads
+    // and dual-writes to both Jaeger (existing) and Tempo (new) during migration week.
+    // After Jaeger decommission, remove the otelcol.exporter.otlp.jaeger block and
+    // its entry from otelcol.exporter.otlp.tempo forward_to list.
+    otelcol.receiver.otlp "default" {
+      grpc {
+        endpoint = "0.0.0.0:4317"
+      }
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input, otelcol.exporter.otlp.jaeger.input]
+      }
+    }
+
+    // Tempo exporter — primary trace store (OPS-519)
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "tempo.observability.svc.cluster.local:4317"
+        tls {
+          insecure = true
+        }
+      }
+    }
+
+    // Jaeger exporter — dual-write during migration week (OPS-519)
+    // Remove this block after Jaeger decommission is confirmed.
+    otelcol.exporter.otlp "jaeger" {
+      client {
+        endpoint = "jaeger-collector.observability.svc.cluster.local:4317"
+        tls {
+          insecure = true
+        }
+      }
+    }

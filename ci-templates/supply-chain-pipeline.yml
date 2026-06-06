@@ -1,0 +1,158 @@
+# Supply Chain Security Pipeline Template (Forgejo CI reference)
+#
+# NOTE (OPS-31, 2026-05-18): GitLab is DECOMMISSIONED. This file is a REFERENCE
+# template only. Active app repos (haists-website, overwatch-console, cfwc-website)
+# use individual .forgejo/workflows/build.yml files in each repo — NOT this template.
+#
+# This file documents the canonical update-gitops pattern for reference and
+# onboarding new apps. See individual repo .forgejo/workflows/build.yml for
+# the live implementation.
+#
+# Required Forgejo repo secrets:
+#   HARBOR_USERNAME - Harbor robot account username
+#   HARBOR_PASSWORD - Harbor robot account password
+#   COSIGN_KEY      - Base64-encoded cosign private key (from Vault secret/cosign)
+#   COSIGN_PASSWORD - Cosign key password (empty string if no password)
+#   GITOPS_TOKEN    - Forgejo API token for sentinel-admin user (write access to
+#                     overwatch-gitops main branch). Vault: secret/forgejo-sentinel-admin
+#
+# GitOps Auto-Deploy:
+#   The update-gitops job clones overwatch-gitops, uses sed to update the image tag
+#   in the deployment manifest, and pushes directly to main.
+#   Branch protection: only sentinel-admin user is in push_whitelist for overwatch-gitops main.
+#   GITOPS_TOKEN must therefore be a sentinel-admin API token.
+#
+# Example .forgejo/workflows/build.yml env section:
+#   env:
+#     HARBOR_REGISTRY: harbor.208.haist.farm
+#     IMAGE_NAME: sentinel/my-app
+#     GITOPS_DEPLOY_FILE: apps/my-app/deployment.yaml
+
+variables:
+  HARBOR_REGISTRY: harbor.208.haist.farm
+  IMAGE_NAME: ""
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+stages:
+  - build
+  - sign
+  - verify
+  - sbom
+  - deploy
+
+build-and-push:
+  stage: build
+  image: quay.io/buildah/stable:v1.38.0
+  script:
+    - buildah login --username "$HARBOR_USERNAME" --password "$HARBOR_PASSWORD" "$HARBOR_REGISTRY"
+    - buildah bud -t "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" .
+    - buildah push --digestfile /tmp/digest.txt "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+    - DIGEST=$(cat /tmp/digest.txt)
+    - echo "IMAGE_DIGEST=$DIGEST" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+sign-image:
+  stage: sign
+  image: docker.io/bitnami/cosign:2.4.3
+  needs:
+    - build-and-push
+  script:
+    - echo "$COSIGN_PRIVATE_KEY" | base64 -d > /tmp/cosign.key
+    - COSIGN_PASSWORD="$COSIGN_PASSWORD" cosign sign --key /tmp/cosign.key -y "$HARBOR_REGISTRY/$IMAGE_NAME@$IMAGE_DIGEST"
+    - rm -f /tmp/cosign.key
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+verify-signature:
+  stage: verify
+  image: docker.io/bitnami/cosign:2.4.3
+  needs:
+    - build-and-push
+    - sign-image
+  script:
+    - echo "$COSIGN_PUBLIC_KEY" | base64 -d > /tmp/cosign.pub
+    - cosign verify --key /tmp/cosign.pub "$HARBOR_REGISTRY/$IMAGE_NAME@$IMAGE_DIGEST"
+    - rm -f /tmp/cosign.pub
+    - echo "Image signature verified successfully!"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+generate-sbom:
+  stage: sbom
+  image: docker.io/anchore/syft:v1.21.0
+  needs:
+    - build-and-push
+    - verify-signature
+  script:
+    - syft "$HARBOR_REGISTRY/$IMAGE_NAME@$IMAGE_DIGEST" -o cyclonedx-json=sbom.cdx.json
+    - echo "SBOM generated for $HARBOR_REGISTRY/$IMAGE_NAME@$IMAGE_DIGEST"
+  artifacts:
+    paths:
+      - sbom.cdx.json
+    expire_in: 90 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+update-gitops:
+  stage: deploy
+  needs:
+    - build-and-push
+    - verify-signature
+  variables:
+    GIT_STRATEGY: none
+    GITOPS_DEPLOY_FILE: ""
+  before_script:
+    - command -v git >/dev/null || (command -v apk >/dev/null && apk add --no-cache git) || (apt-get update -qq && apt-get install -y -qq git)
+  script:
+    - |
+      if [ -z "$GITOPS_DEPLOY_FILE" ]; then
+        echo "GITOPS_DEPLOY_FILE not set — skipping gitops update"
+        exit 0
+      fi
+      if [ -z "$GITOPS_TOKEN" ]; then
+        echo "ERROR: GITOPS_TOKEN CI/CD variable not set"
+        echo "Add a PAT with write_repository scope on overwatch-gitops"
+        exit 1
+      fi
+
+      FULL_IMAGE="$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+      echo "Updating $GITOPS_DEPLOY_FILE with image $FULL_IMAGE"
+
+      git config --global user.name "Sentinel CI"
+      git config --global user.email "ci@haist.farm"
+
+      REPO_URL="https://sentinel-admin:${GITOPS_TOKEN}@forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git"
+      rm -rf /tmp/gitops
+      git clone --depth 1 --branch main "$REPO_URL" /tmp/gitops
+      cd /tmp/gitops
+
+      sed -i "s|image: ${HARBOR_REGISTRY}/${IMAGE_NAME}:.*|image: ${FULL_IMAGE}|" "$GITOPS_DEPLOY_FILE"
+
+      if git diff --quiet; then
+        echo "No changes — image tag already up to date"
+        exit 0
+      fi
+
+      git add "$GITOPS_DEPLOY_FILE"
+      git commit -m "[ci] Update ${IMAGE_NAME} to ${IMAGE_TAG} [OPS-31]"
+
+      MAX_RETRIES=3
+      for i in $(seq 1 $MAX_RETRIES); do
+        if git push origin main; then
+          echo "Image tag updated successfully"
+          exit 0
+        fi
+        echo "Push failed (attempt $i/$MAX_RETRIES), rebasing..."
+        git pull --rebase origin main
+      done
+
+      echo "Failed to push after $MAX_RETRIES attempts"
+      exit 1
+  rules:
+    - if: $GITOPS_DEPLOY_FILE
+      when: on_success
+    - when: never

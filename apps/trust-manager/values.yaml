@@ -1,0 +1,7 @@
+---
+# OPS-518 — trust-manager Helm values
+# trust-manager distributes CA bundles to namespaces via Bundle CRs.
+# Default install; no custom configuration needed beyond namespace binding.
+app:
+  trust:
+    namespace: cert-manager

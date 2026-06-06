@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  hosts:
+    - backstage.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: backstage.backstage.svc.cluster.local
+            port:
+              number: 7007

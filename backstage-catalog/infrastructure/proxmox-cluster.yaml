@@ -1,0 +1,107 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: proxmox-cluster
+  description: Proxmox VE cluster (3 hosts) providing compute, storage, and networking
+  links:
+    - url: https://192.168.12.6:8006
+      title: pve Console
+      icon: dashboard
+    - url: https://192.168.12.56:8006
+      title: 208-pve2 Console
+      icon: web
+    - url: https://192.168.12.57:8006
+      title: pve3 Console
+      icon: web
+    - url: https://192.168.12.10
+      title: pve iDRAC (R440, 14G)
+      icon: cloud
+    - url: https://192.168.12.50
+      title: 208-pve2 iDRAC (7920, 14G)
+      icon: cloud
+    - url: https://192.168.12.202
+      title: pve3 iDRAC (R720xd, 12G)
+      icon: cloud
+  tags:
+    - hypervisor
+    - proxmox
+    - infrastructure
+    - overwatch
+spec:
+  type: compute-cluster
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: proxmox-pve
+  description: "Proxmox host pve: 32 CPU, 62GB RAM (iac-control, gitlab, pangolin-proxy)"
+  links:
+    - url: https://192.168.12.6:8006
+      title: Proxmox Console
+      icon: dashboard
+    - url: https://192.168.12.10
+      title: iDRAC (PowerEdge R440, 14G)
+      icon: cloud
+  tags:
+    - hypervisor
+    - proxmox
+    - overwatch
+spec:
+  type: hypervisor
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-cluster
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: proxmox-208-pve2
+  description: "Proxmox host 208-pve2: 36 CPU, 125GB RAM (vault, wazuh, OKD masters)"
+  links:
+    - url: https://192.168.12.56:8006
+      title: Proxmox Console
+      icon: dashboard
+    - url: https://192.168.12.50
+      title: iDRAC (Precision 7920 Rack, 14G)
+      icon: cloud
+  tags:
+    - hypervisor
+    - proxmox
+    - overwatch
+spec:
+  type: hypervisor
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-cluster
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: proxmox-pve3
+  description: "Proxmox host pve3: 32 CPU, 125GB RAM (seedbox, minio LXCs)"
+  links:
+    - url: https://192.168.12.57:8006
+      title: Proxmox Console
+      icon: dashboard
+    - url: https://192.168.12.202
+      title: iDRAC (PowerEdge R720xd, 12G)
+      icon: cloud
+  tags:
+    - hypervisor
+    - proxmox
+    - overwatch
+spec:
+  type: hypervisor
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-cluster

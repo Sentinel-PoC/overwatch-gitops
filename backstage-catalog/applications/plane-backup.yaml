@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: plane-backup
+  description: Plane backup CronJob — schedules periodic database exports to S3/MinIO
+  annotations:
+    backstage.io/kubernetes-namespace: plane-backup
+    argocd/app-name: plane-backup
+  tags:
+    - backup
+    - plane
+    - operations
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:plane

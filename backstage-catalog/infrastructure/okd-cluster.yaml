@@ -1,0 +1,28 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: okd-cluster
+  description: OKD 4.x Kubernetes cluster (3 master nodes at 10.0.0.221-223 on vmbr1)
+  annotations:
+    backstage.io/techdocs-ref: "url:https://forgejo.208.haist.farm/sentinel-admin/overwatch/raw/branch/main"
+  links:
+    - url: https://console.208.haist.farm
+      title: OKD Console
+      icon: dashboard
+    - url: https://api.overwatch.haist.farm:6443
+      title: API Server
+      icon: web
+  tags:
+    - kubernetes
+    - okd
+    - infrastructure
+    - overwatch
+spec:
+  type: kubernetes-cluster
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:iac-control
+    - resource:proxmox-cluster

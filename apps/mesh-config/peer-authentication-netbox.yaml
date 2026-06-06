@@ -1,0 +1,33 @@
+---
+# Netbox valkey and PostgreSQL have sidecars with STRICT mTLS.
+# PostgreSQL raw deployment is unmeshed (inject: false).
+# Allow PERMISSIVE on data store ports for unmeshed component access.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: netbox-valkey-permissive
+  namespace: netbox
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    6379:
+      mode: PERMISSIVE
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: netbox-postgresql-permissive
+  namespace: netbox
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    5432:
+      mode: PERMISSIVE

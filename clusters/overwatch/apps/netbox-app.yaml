@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: netbox
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: netbox
+      targetRevision: 7.4.8
+      helm:
+        valueFiles:
+          - $values/clusters/overwatch/apps/netbox/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/netbox
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: netbox
+  ignoreDifferences:
+    - kind: PersistentVolumeClaim
+      jqPathExpressions:
+        - .spec.resources.requests.storage
+    # OPS-647: Narrowed from broad .spec.data[]?.remoteRef + .spec.target masks to
+    # only the specific sub-fields ESO adds as CRD defaults after creation. The
+    # broad mask was silently swallowing legitimate template/remoteRef.key changes
+    # (e.g. PR #184 OIDC cutover applied to Git but never reached the cluster).
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

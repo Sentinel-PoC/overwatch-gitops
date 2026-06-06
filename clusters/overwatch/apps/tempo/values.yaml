@@ -1,0 +1,169 @@
+# Tempo Helm values — OPS-519
+# Chart: grafana/tempo 1.x (monolithic mode)
+# Storage: MinIO at 192.168.12.58:9000, bucket tempo-traces
+# Credentials: AWS SDK env-chain — ExternalSecret tempo-minio-creds creates
+#   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in K8s Secret; extraEnvFrom injects
+#   them; Tempo S3 client picks them up from environment (mirrors OPS-399 Loki pattern).
+# Auth: none (single-tenant lab; Grafana handles access control)
+#
+# Pre-deploy operator actions:
+#   1. mc mb myminio/tempo-traces   (MinIO console or mc CLI)
+#   2. vault kv put secret/tempo/minio-creds access_key=<k> secret_key=<s>
+#   3. Mirror image to Harbor: docker pull grafana/tempo:2.7.2 && docker tag ... && docker push
+#
+# Monolithic mode chosen (vs tempo-distributed) for lab scale:
+#   - Single pod, low memory footprint (~256Mi idle)
+#   - No Memberlist/gossip complexity
+#   - Sufficient for single-tenant trace volume from a ~350-pod OKD cluster
+#
+# Receivers enabled (matching Jaeger for dual-run compatibility):
+#   - OTLP gRPC (4317) — OpenTelemetry native; Alloy/otelcol push here
+#   - OTLP HTTP (4318) — OpenTelemetry native; SDK direct push
+#   - Jaeger gRPC (14250) — drop-in for existing Jaeger SDKs during migration
+#   - Jaeger Thrift HTTP (14268)
+#   - Zipkin (9411)
+
+tempo:
+  # Image — pull from Harbor sentinel/ project (platform standard)
+  # Operator must mirror: docker.io/grafana/tempo:2.7.2 → harbor.208.haist.farm/sentinel/tempo:2.7.2
+  # Chart grafana/tempo 1.10.3 uses FLAT keys (statefulset.yaml L57):
+  #   image: {{ .Values.tempo.repository }}:{{ .Values.tempo.tag | default .Chart.AppVersion }}
+  # The nested tempo.image.{registry,repository,tag} block is NOT read by this chart.
+  repository: harbor.208.haist.farm/sentinel/tempo
+  tag: "2.7.2"
+  pullPolicy: IfNotPresent
+  # OPS-1106: Harbor sentinel/ project requires auth; pull credential provisioned by
+  # the harbor-pull-secrets ArgoCD app (apps/harbor-pull-secrets/external-secrets.yaml)
+  # via ESO ExternalSecret → Secret harbor-pull-secret in namespace observability.
+  # Chart statefulset.yaml L39-47: tempo.pullSecrets populates pod imagePullSecrets.
+  pullSecrets:
+    - harbor-pull-secret
+
+  # Container-level security context (tempo.securityContext in chart)
+  # NOTE: fsGroup/runAsUser/runAsNonRoot belong at pod level — see root-level
+  # securityContext: below (outside tempo: block). Only container-scoped fields here.
+  # Tempo chart 1.10.3: tempo.securityContext maps to container securityContext;
+  # fsGroup in container context is not declared in schema → StatefulSet apply fails.
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  # containerSecurityContext is not used by grafana/tempo 1.x chart;
+  # keeping for documentation only — effective config is in securityContext above.
+  # containerSecurityContext:
+
+  # S3 storage backend (MinIO)
+  # Credentials injected via AWS SDK env-chain from tempo-minio-creds secret.
+  # accessKey/secretKey intentionally omitted — Tempo's S3 client respects
+  # AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY environment variables.
+  storage:
+    trace:
+      backend: s3
+      s3:
+        endpoint: 192.168.12.58:9000
+        bucket: tempo-traces
+        region: us-east-1
+        insecure: true
+        # force_path_style required for MinIO
+        forcepathstyle: true
+        # accessKey + secretKey omitted: injected via env vars (OPS-399 pattern)
+
+  # Single-tenant mode (auth disabled — lab environment)
+  multitenancyEnabled: false
+
+  # Trace retention: 7 days (traces are ephemeral forensic evidence;
+  # 7d covers the dual-run window with Jaeger before decommission)
+  retention: 168h
+
+  # Receivers — enable all for dual-run compatibility with Jaeger SDKs
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+    jaeger:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:14250
+        thrift_http:
+          endpoint: 0.0.0.0:14268
+    zipkin:
+      endpoint: 0.0.0.0:9411
+
+  # Resources — conservative lab sizing
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Inject MinIO credentials via env-chain (mirrors Loki ExtraEnvFrom pattern)
+  extraEnvFrom:
+    - secretRef:
+        name: tempo-minio-creds
+
+  # Writable volume for WAL + local traces at /var/tempo (OPS-1106 fix).
+  # readOnlyRootFilesystem: true means /var/tempo on the root FS is read-only.
+  # Chart only mounts /var/tempo when persistence.enabled=true (PVC). Without a
+  # mount, tempo crashes: "mkdir /var/tempo/wal: read-only file system".
+  # WAL is transient (durable data is in S3/MinIO) → emptyDir is correct here.
+  # tempo.extraVolumeMounts (container-level) pairs with top-level extraVolumes below.
+  extraVolumeMounts:
+    - name: tempo-wal
+      mountPath: /var/tempo
+
+  # ServiceMonitor for Prometheus scraping (Tempo exposes /metrics on :3100)
+  serviceMonitor:
+    enabled: true
+    namespace: observability
+    interval: 60s
+
+# Gateway — disabled (single-tenant; direct pod addressing sufficient for lab)
+gateway:
+  enabled: false
+
+# Minio sub-chart — disabled (external MinIO at 192.168.12.58)
+minio:
+  enabled: false
+
+# memcached — disabled (lab; no query caching needed at this scale)
+memcached:
+  enabled: false
+
+memcachedExporter:
+  enabled: false
+
+# metaMonitoring disabled (lab)
+metaMonitoring:
+  serviceMonitor:
+    enabled: false
+  grafanaAgent:
+    enabled: false
+
+# Tests disabled
+test:
+  enabled: false
+
+# Pod-level security context (root-level key, outside tempo: block)
+# grafana/tempo 1.x chart maps this to StatefulSet.spec.template.spec.securityContext.
+# fsGroup/runAsUser/runAsGroup/runAsNonRoot are pod-scoped fields — placing them in
+# tempo.securityContext (container-level) causes: "securityContext.fsGroup: field not
+# declared in schema" and the StatefulSet fails to apply. OPS-1106 fix.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+# Pod-level extra volumes (top-level chart key, maps to StatefulSet.spec.template.spec.volumes).
+# Paired with tempo.extraVolumeMounts above to provide a writable /var/tempo (OPS-1106 fix).
+extraVolumes:
+  - name: tempo-wal
+    emptyDir: {}

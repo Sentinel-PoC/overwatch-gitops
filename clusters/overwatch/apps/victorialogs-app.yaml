@@ -1,0 +1,36 @@
+---
+# OPS-808 — VictoriaLogs operational log lane
+# Single-node deployment backed by TrueNAS NFS PersistentVolume (500Gi)
+# Namespace: logging | Route: victorialogs.208.haist.farm
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: victorialogs
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/victorialogs
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: logging
+  ignoreDifferences:
+    - kind: PersistentVolumeClaim
+      jqPathExpressions:
+        - .spec.resources.requests.storage
+        - .spec.storageClassName
+        - .spec.volumeName
+    - kind: PersistentVolume
+      name: victorialogs-nfs-pv
+      jqPathExpressions:
+        - .spec.claimRef
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: matrix-backup
+  description: Matrix backup CronJob — schedules periodic Synapse database exports to S3/MinIO
+  annotations:
+    backstage.io/kubernetes-namespace: matrix-backup
+    argocd/app-name: matrix-backup
+  tags:
+    - backup
+    - matrix
+    - operations
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:matrix

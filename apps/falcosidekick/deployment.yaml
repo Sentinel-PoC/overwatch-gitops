@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: falcosidekick
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falcosidekick
+    app.kubernetes.io/component: event-forwarder
+  annotations:
+    # OPS-205 (2026-04-30): Path A — falcosidekick → Wazuh Indexer via Elasticsearch output.
+    # Path C (Wazuh node-agent stdout capture) was verified and failed: OKD nodes
+    # have no Wazuh agents; Wazuh Indexer showed 0 Falco events over 48h.
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: falcosidekick
+        app.kubernetes.io/component: event-forwarder
+    spec:
+      serviceAccountName: falcosidekick
+      securityContext:
+        # OPS-515 (2026-05-11): Removed hardcoded runAsUser/runAsGroup/fsGroup
+        # (all = 1000). OpenShift restricted-v2 SCC rejected those values for the
+        # falcosidekick ServiceAccount because the falco-system namespace allowed
+        # UID range is 1000950000-1000959999. SCC now assigns a UID/GID from the
+        # namespace range automatically. runAsNonRoot stays True; container-level
+        # securityContext (readOnlyRootFilesystem, drop ALL capabilities) is
+        # unchanged.
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: falcosidekick
+          image: harbor.208.haist.farm/sentinel/falcosidekick@sha256:93c7ba6cf7efba20c0044f7074e4ec7078d2d28a2425ce0a58121072a468e103
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 2801
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: falcosidekick-config
+          env:
+            - name: ELASTICSEARCH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: falcosidekick-wazuh-indexer
+                  key: username
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: falcosidekick-wazuh-indexer
+                  key: password
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 2801
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 2801
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

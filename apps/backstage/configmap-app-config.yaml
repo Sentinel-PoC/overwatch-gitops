@@ -1,0 +1,149 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-app-config
+  namespace: backstage
+data:
+  app-config.yaml: |
+    app:
+      title: Sentinel Developer Portal
+      baseUrl: https://backstage.208.haist.farm
+
+    organization:
+      name: Project Sentinel
+
+    backend:
+      baseUrl: https://backstage.208.haist.farm
+      listen:
+        port: 7007
+        host: 0.0.0.0
+      reading:
+        allow:
+          - host: 'forgejo.208.haist.farm'
+      csp:
+        connect-src: ["'self'", 'https://*.208.haist.farm', 'https://forgejo.208.haist.farm']
+      cors:
+        origin: https://backstage.208.haist.farm
+        methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+        credentials: true
+      database:
+        client: pg
+        connection:
+          host: ${POSTGRES_HOST}
+          port: ${POSTGRES_PORT}
+          user: ${POSTGRES_USER}
+          password: ${POSTGRES_PASSWORD}
+      auth:
+        keys:
+          - secret: ${BACKEND_SECRET}
+        externalAccess:
+          - type: static
+            options:
+              token: ${MCP_TOKEN}
+              subject: mcp-actions
+      session:
+        secret: ${SESSION_SECRET}
+
+    auth:
+      environment: production
+      providers:
+        guest:
+          dangerouslyAllowOutsideDevelopment: false
+        oidc:
+          production:
+            metadataUrl: https://auth-next.208.haist.farm/application/o/backstage/.well-known/openid-configuration
+            clientId: ${OIDC_CLIENT_ID}
+            clientSecret: ${OIDC_CLIENT_SECRET}
+            additionalScopes:
+              - profile
+              - email
+              - groups
+            prompt: auto
+            callbackUrl: https://backstage.208.haist.farm/api/auth/oidc/handler/frame
+            signIn:
+              resolvers:
+                - resolver: emailMatchingUserEntityProfileEmail
+      signIn:
+        resolvers:
+          - resolver: emailMatchingUserEntityProfileEmail
+
+    catalog:
+      import:
+        entityFilename: catalog-info.yaml
+        pullRequestBranchName: backstage-integration
+      rules:
+        - allow: [Component, System, API, Resource, Location, Group, User]
+      locations:
+        - type: url
+          target: https://forgejo.208.haist.farm/sentinel-admin/sentinel-iac/raw/branch/main/catalog-info.yaml
+          rules:
+            - allow: [Component, System, Location]
+        - type: url
+          target: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops/raw/branch/main/catalog-info.yaml
+          rules:
+            - allow: [Component, System, API, Resource, Location, Group, User]
+        - type: url
+          target: https://forgejo.208.haist.farm/sentinel-admin/sentinel-unifi/raw/branch/main/catalog-info.yaml
+          rules:
+            - allow: [Component, System, Location]
+
+    integrations:
+      gitea:
+        - host: forgejo.208.haist.farm
+          username: renovate-bot
+          password: ${FORGEJO_TOKEN}
+
+    techdocs:
+      builder: local
+      generator:
+        runIn: local
+      publisher:
+        type: awsS3
+        awsS3:
+          bucketName: backstage-techdocs
+          endpoint: 'https://minio.208.haist.farm'
+          credentials:
+            accessKeyId: ${TECHDOCS_S3_ACCESS_KEY}
+            secretAccessKey: ${TECHDOCS_S3_SECRET_KEY}
+          s3ForcePathStyle: true
+          region: us-east-1
+
+    proxy:
+      endpoints:
+        '/grafana/api':
+          target: https://grafana.208.haist.farm
+          headers:
+            Authorization: Bearer ${GRAFANA_TOKEN}
+
+    scaffolder: {}
+
+    kubernetes:
+      serviceLocatorMethod:
+        type: multiTenant
+      clusterLocatorMethods:
+        - type: config
+          clusters:
+            - name: overwatch
+              url: https://api.overwatch.haist.farm:6443
+              authProvider: serviceAccount
+              skipTLSVerify: true
+
+    argocd:
+      baseUrl: https://argocd.208.haist.farm
+      appLocatorMethods:
+        - type: config
+          instances:
+            - name: overwatch
+              url: https://argocd.208.haist.farm
+              token: ${ARGOCD_AUTH_TOKEN}
+
+    grafana:
+      domain: https://grafana.208.haist.farm
+      unifiedAlerting: true
+
+    vault:
+      baseUrl: https://vault.208.haist.farm
+      token: ${VAULT_TOKEN}
+      secretEngine: secret
+      kvVersion: 2

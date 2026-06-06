@@ -1,0 +1,139 @@
+# OPS-517: NetworkPolicy default-deny baseline for external-secrets namespace.
+#
+# DEPLOYMENT NOTE: This namespace is NOT managed by ArgoCD auto-sync.
+# Apply manually: oc apply -f apps/external-secrets/
+# See clusters/overwatch/apps/external-secrets-reference.yaml for context.
+#
+# Pods in scope:
+#   - cluster-external-secrets (main controller — watches K8s, syncs from Vault)
+#   - cluster-external-secrets-cert-controller (manages webhook TLS cert)
+#   - cluster-external-secrets-webhook (admission webhook server — port 10250)
+#   - external-secrets-operator-controller-manager (OLM controller)
+#
+# Traffic requirements:
+#   - All pods: DNS + Kubernetes API server (watch/patch secrets, CRDs)
+#   - cluster-external-secrets: Vault egress (192.168.12.206:8200) for secret sync
+#   - cluster-external-secrets-webhook: ingress from kube-apiserver on port 10250
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: external-secrets
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: external-secrets
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow intra-namespace pod communication
+# cert-controller and webhook coordinate via shared K8s secrets; this covers
+# any direct pod traffic between operator components.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: external-secrets
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# Allow egress to Kubernetes API server (port 6443)
+# OKD canonical pattern — no destination restriction, port 6443.
+# ESO controllers watch/patch Secrets, ExternalSecrets, ClusterSecretStores via kube API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: external-secrets
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6443
+          protocol: TCP
+---
+# Allow egress to Vault (secret sync source)
+# ESO cluster-external-secrets syncs from Vault at 192.168.12.206:8200.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vault-egress
+  namespace: external-secrets
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.206/32
+      ports:
+        - port: 8200
+          protocol: TCP
+---
+# Allow ingress for admission webhook (port 10250)
+# The kube-apiserver calls the ESO webhook on port 10250 for admission control.
+# OKD canonical pattern: allow any source on webhook port (kube-apiserver is the caller;
+# no NetworkPolicy-friendly label exists on kube-apiserver pods for podSelector use).
+# Pattern sourced from openshift-cloud-credential-operator allow-ingress-webhook.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webhook-ingress
+  namespace: external-secrets
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 10250
+          protocol: TCP

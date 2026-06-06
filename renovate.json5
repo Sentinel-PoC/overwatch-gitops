@@ -1,0 +1,177 @@
+// OPS-855: Renovate global + per-repo configuration for the Overwatch platform.
+//
+// This file is both:
+//   1. The global config mounted into the Renovate container by
+//      .forgejo/workflows/renovate.yml (RENOVATE_CONFIG_FILE).
+//   2. The per-repo onboarding config for overwatch-gitops itself.
+//
+// Global settings (platform, endpoint, autodiscover) are only meaningful
+// when this file is loaded as the global config file; they are ignored
+// when Renovate reads it as a repo-level config in other onboarded repos.
+//
+// Phase 2 strategy: security:only-security-updates — target the CVE backlog
+// (OPS-489: 306 critical CVEs) before enabling full dependency bump cadence.
+// Phase 3 will widen to config:recommended full updates and add auto-merge
+// for patch/digest updates once CI is validated.
+//
+// Auto-merge: DISABLED for Phase 2. Security PRs require human review.
+// Enable per packageRule in Phase 3 after reviewing initial PR quality.
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  // ─── Global settings (effective when used as RENOVATE_CONFIG_FILE) ────────
+  "platform": "forgejo",
+  "endpoint": "https://forgejo.208.haist.farm/api/v1",
+
+  // Autodiscover all repos in the sentinel-admin org.
+  // Renovate will open an onboarding PR in each repo that doesn't yet have
+  // a renovate.json5 (or equivalent), proposing this config as a starting point.
+  "autodiscover": true,
+  "autodiscoverFilter": ["sentinel-admin/*"],
+
+  // Dependency Dashboard: creates a single "Dependency Dashboard" issue in
+  // each repo giving a live overview of all pending/open Renovate PRs.
+  // Required by config:recommended; opt-out in per-repo config if unwanted.
+  "dependencyDashboard": true,
+
+  // ─── Update policy ────────────────────────────────────────────────────────
+  "extends": [
+    "config:recommended",
+    // Phase 2: security-only updates. Removes update noise while CVE backlog
+    // is being cleared. Renovate will only open PRs for deps with known CVEs
+    // in the OSV/GitHub Advisory databases.
+    "security:only-security-updates",
+    // Run during non-business hours (UTC weekday nights + weekends) to avoid
+    // PR noise during active development windows.
+    "schedule:nonOfficeHours"
+  ],
+
+  // OSV vulnerability alerts — enable proactive CVE scanning even for deps
+  // not yet tracked by Renovate's package manager detection.
+  "osvVulnerabilityAlerts": true,
+
+  // ─── Rate limits ─────────────────────────────────────────────────────────
+  // Limit concurrent open PRs per repo to avoid overwhelming reviewers.
+  // Raise in Phase 3 once initial security backlog is cleared.
+  "prConcurrentLimit": 10,
+  // Max new PRs per hour across all repos to avoid GitHub/Forgejo API abuse.
+  "prHourlyLimit": 5,
+
+  // ─── Auto-merge: DISABLED for Phase 2 ────────────────────────────────────
+  // All PRs require human review during the initial rollout.
+  // Uncomment and scope narrowly in Phase 3 after validating PR quality:
+  // "platformAutomerge": true,  // requires Forgejo >= 10.0 (we have 14.0.5)
+
+  // ─── Package rules ────────────────────────────────────────────────────────
+  "packageRules": [
+    {
+      // OpenTofu/Terraform providers: override datasource to registry.opentofu.org.
+      // Without this Renovate defaults to registry.terraform.io which requires a
+      // paid Terraform Cloud account for rate-limit-free access.
+      "matchManagers": ["terraform"],
+      "registryUrls": ["https://registry.opentofu.org"],
+      "description": "Use OpenTofu registry for Terraform provider datasource"
+    },
+    {
+      // Group all Helm chart updates in the ArgoCD app manifests to reduce
+      // review overhead (one PR per Helm release wave instead of per-chart).
+      // Applies to sources detected via the argocd custom manager below.
+      "matchManagers": ["argocd"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Helm chart version bumps (ArgoCD manifests)",
+      "description": "Group Helm chart minor/patch updates from ArgoCD Application manifests"
+    }
+  ],
+
+  // ─── ArgoCD manager ──────────────────────────────────────────────────────
+  // Built-in argocd manager handles spec.source.targetRevision and
+  // spec.sources[].targetRevision for Helm chart version pins.
+  // Must configure managerFilePatterns because there is no default pattern
+  // for the path layout used in this repo (clusters/**/*-app.yaml).
+  "argocd": {
+    "managerFilePatterns": [
+      // ArgoCD Application manifests — chart targetRevision pins
+      "/clusters/.+\\.ya?ml$",
+      // Legacy app-of-apps style YAML in apps/ and argocd/
+      "/apps/.+\\.ya?ml$",
+      "/argocd/.+\\.ya?ml$"
+    ]
+  },
+
+  // ─── Custom regex managers ────────────────────────────────────────────────
+  // Three custom managers per Phase 1 research (OPS-855 comment 38069aa0):
+  //   1. Container images in Ansible role defaults/main.yml
+  //   2. ArgoCD targetRevision with release tag prefix (e.g. helm-chart-1.2.3)
+  //   3. Raw chart version fields in values.yaml (helm-values only handles
+  //      standard repository/tag blocks, not bare version: fields)
+  "customManagers": [
+    {
+      // ── Custom manager 1: Ansible role defaults/main.yml container images ──
+      // The built-in ansible manager only scans tasks/*.yml.
+      // Ansible roles in sentinel-iac store container image refs in
+      // defaults/main.yml (e.g. image: "docker.io/library/postgres:16").
+      // This regex manager extends coverage to that path.
+      "customType": "regex",
+      "description": "Container images in Ansible role defaults/main.yml",
+      "managerFilePatterns": [
+        // Match defaults/main.yml or defaults/main.yaml anywhere in the tree
+        "(^|/)defaults/main\\.ya?ml$"
+      ],
+      "matchStrings": [
+        // Matches:  image: "docker.io/library/postgres:16"
+        //           image: postgres:16-alpine
+        //           image: 'harbor.208.haist.farm/sentinel/jaeger:1.62.0'
+        "image:\\s*['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      // ── Custom manager 2: ArgoCD targetRevision with tag prefix ────────────
+      // Some Helm charts use a release tag prefix (e.g. helm-chart-1.2.3 or
+      // chart-v2.5.1) where the version is embedded after a literal prefix.
+      // The built-in argocd manager expects bare semver in targetRevision.
+      // This regex manager extracts the version component for datasource lookup.
+      // Scope: clusters/ app manifests where chart + targetRevision both appear.
+      "customType": "regex",
+      "description": "ArgoCD targetRevision with release tag prefix (e.g. helm-chart-1.2.3)",
+      "managerFilePatterns": [
+        "/clusters/.+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        // Matches:
+        //   chart: my-chart
+        //   targetRevision: helm-chart-1.2.3
+        // Capture group: depName from chart:, currentValue from version part.
+        "chart:\\s*(?<depName>[^\\s]+)[\\s\\S]*?targetRevision:\\s*[a-zA-Z][a-zA-Z0-9-]*-(?<currentValue>\\d+\\.\\d+[^\\s]*)"
+      ],
+      "datasourceTemplate": "helm",
+      "versioningTemplate": "semver"
+    },
+    {
+      // ── Custom manager 3: Raw chart version fields in values.yaml ──────────
+      // helm-values manager handles standard image: {repository, tag} blocks.
+      // Some values.yaml files have a top-level or nested `version:` field
+      // that specifies a chart or image version as a plain string.
+      // Example in apps/langfuse/values.yaml or apps/kyverno-helm/values.yaml:
+      //   postgresVersion: "16.3"
+      //   chartVersion: "1.5.24"
+      // This regex manager pairs the version field with a depName comment
+      // annotation for Renovate to resolve the datasource.
+      //
+      // Convention (must be present in the values.yaml for this manager to fire):
+      //   # renovate: depName=postgres datasource=docker
+      //   postgresVersion: "16.3"
+      "customType": "regex",
+      "description": "Raw chart/image version fields in values.yaml annotated with renovate hints",
+      "managerFilePatterns": [
+        "(^|/)values\\.ya?ml$"
+      ],
+      "matchStrings": [
+        // Matches annotated version fields:
+        //   # renovate: depName=<name> datasource=<datasource>
+        //   <anyKey>: "<version>"
+        "#\\s*renovate:\\s*depName=(?<depName>[^\\s]+)\\s+datasource=(?<datasource>[^\\s]+)[^\\n]*\\n[^:]+:\\s*['\"]?(?<currentValue>[\\d][^'\"\\s]*)['\"]?"
+      ]
+    }
+  ]
+}

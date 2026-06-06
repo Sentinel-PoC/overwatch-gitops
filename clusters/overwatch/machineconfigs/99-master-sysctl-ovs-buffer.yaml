@@ -1,0 +1,21 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 99-master-sysctl-ovs-buffer
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - path: /etc/sysctl.d/99-ovs-buffer.conf
+          mode: 0644
+          overwrite: true
+          contents:
+            # net.core.rmem_max/default=16M, wmem_max/default=16M
+            # net.core.netdev_budget=600, netdev_budget_usecs=4000
+            # net.core.netdev_max_backlog=10000 (default 1000, reduces dp_flows_lookup_lost)
+            # net.core.somaxconn=4096
+            source: data:text/plain;charset=utf-8;base64,bmV0LmNvcmUucm1lbV9tYXg9MTY3NzcyMTYKbmV0LmNvcmUucm1lbV9kZWZhdWx0PTE2Nzc3MjE2Cm5ldC5jb3JlLndtZW1fbWF4PTE2Nzc3MjE2Cm5ldC5jb3JlLndtZW1fZGVmYXVsdD0xNjc3NzIxNgpuZXQuY29yZS5uZXRkZXZfYnVkZ2V0PTYwMApuZXQuY29yZS5uZXRkZXZfYnVkZ2V0X3VzZWNzPTQwMDAKbmV0LmNvcmUubmV0ZGV2X21heF9iYWNrbG9nPTEwMDAwCm5ldC5jb3JlLnNvbWF4Y29ubj00MDk2Cg==

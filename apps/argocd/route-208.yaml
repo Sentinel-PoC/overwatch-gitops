@@ -1,0 +1,19 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: argocd-208
+  namespace: openshift-gitops
+  annotations:
+    # NOTE: destinationCACertificate is applied at deploy time from
+    # the openshift-service-serving-signer CA. See the cluster's
+    # service-ca configmap for the current cert.
+spec:
+  host: argocd.208.haist.farm
+  to:
+    kind: Service
+    name: openshift-gitops-server
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect

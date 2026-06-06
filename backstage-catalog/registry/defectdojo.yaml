@@ -1,0 +1,47 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: defectdojo
+  description: Application security and vulnerability management platform with CI integration
+  annotations:
+    backstage.io/kubernetes-label-selector: app=defectdojo
+    backstage.io/kubernetes-namespace: defectdojo
+    argocd/app-name: defectdojo
+  links:
+    - url: https://defectdojo.208.haist.farm
+      title: DefectDojo Dashboard
+      icon: dashboard
+  tags:
+    - security
+    - vulnerability-management
+    - asdb
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:defectdojo-postgresql
+  providesApis:
+    - defectdojo-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: defectdojo-postgresql
+  description: PostgreSQL database backend for DefectDojo
+  annotations:
+    backstage.io/kubernetes-label-selector: app=postgresql
+    backstage.io/kubernetes-namespace: defectdojo
+    argocd/app-name: defectdojo
+  tags:
+    - database
+    - postgresql
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: console-208
+  namespace: openshift-console
+spec:
+  host: console.208.haist.farm
+  to:
+    kind: Service
+    name: console
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect

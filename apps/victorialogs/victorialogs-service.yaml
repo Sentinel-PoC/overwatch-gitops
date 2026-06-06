@@ -1,0 +1,20 @@
+---
+# OPS-808 — VictoriaLogs ClusterIP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: victorialogs
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: victorialogs
+    app.kubernetes.io/component: log-storage
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: victorialogs
+    app.kubernetes.io/component: log-storage
+  ports:
+    - name: http
+      port: 9428
+      targetPort: http
+      protocol: TCP

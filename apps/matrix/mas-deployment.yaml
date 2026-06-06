@@ -1,0 +1,183 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mas
+  namespace: matrix
+  labels:
+    app: mas
+  annotations:
+    reloader.stakater.com/auto: "true"
+    backstage.io/component: matrix
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: mas
+  template:
+    metadata:
+      labels:
+        app: mas
+        app.kubernetes.io/name: mas
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432"
+    spec:
+      serviceAccountName: matrix-sa
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        runAsNonRoot: true
+      initContainers:
+        - name: config-renderer
+          image: harbor.208.haist.farm/sentinel/synapse@sha256:485b29c3650d35e79554906085c908426cec3c8848a72a1ff19aacda9344aad7
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sed "s|\${MAS_DB_PASSWORD}|$MAS_DB_PASSWORD|g" /config-template/config.yaml |
+              sed "s|\${MAS_SHARED_SECRET}|$MAS_SHARED_SECRET|g" |
+              sed "s|\${MAS_OIDC_CLIENT_SECRET}|$MAS_OIDC_CLIENT_SECRET|g" |
+              sed "s|\${MAS_ENCRYPTION_SECRET}|$MAS_ENCRYPTION_SECRET|g" |
+              sed "s|\${MAS_AUTHENTIK_CLIENT_ID}|$MAS_AUTHENTIK_CLIENT_ID|g" |
+              sed "s|\${MAS_AUTHENTIK_CLIENT_SECRET}|$MAS_AUTHENTIK_CLIENT_SECRET|g" > /rendered-config/config.yaml
+          env:
+            - name: MAS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mas-credentials
+                  key: db_password
+            - name: MAS_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mas-credentials
+                  key: shared_secret
+            - name: MAS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mas-oidc-credentials
+                  key: client_secret
+            - name: MAS_ENCRYPTION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mas-credentials
+                  key: encryption_secret
+            - name: MAS_AUTHENTIK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mas-authentik-oidc-credentials
+                  key: client_id
+            - name: MAS_AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mas-authentik-oidc-credentials
+                  key: client_secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: mas-config
+              mountPath: /config-template
+            - name: rendered-config
+              mountPath: /rendered-config
+        - name: db-migrate
+          image: harbor.208.haist.farm/sentinel/mas@sha256:dc8f4697dc0a9e010a795116794e895bd986b444f5dc33d9232bbd5673e21d41
+          command: ["mas-cli", "database", "migrate", "--config", "/config/config.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: rendered-config
+              mountPath: /config
+            - name: signing-keys
+              mountPath: /keys
+              readOnly: true
+            - name: synapse-config
+              mountPath: /synapse-config
+              readOnly: true
+      containers:
+        - name: mas
+          image: harbor.208.haist.farm/sentinel/mas@sha256:dc8f4697dc0a9e010a795116794e895bd986b444f5dc33d9232bbd5673e21d41
+          imagePullPolicy: IfNotPresent
+          command: ["mas-cli", "server", "--config", "/config/config.yaml"]
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: rendered-config
+              mountPath: /config
+            - name: signing-keys
+              mountPath: /keys
+              readOnly: true
+            - name: synapse-config
+              mountPath: /synapse-config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: mas-config
+          configMap:
+            name: mas-config
+        - name: rendered-config
+          emptyDir: {}
+        - name: signing-keys
+          secret:
+            secretName: mas-signing-keys
+        - name: synapse-config
+          configMap:
+            name: synapse-config
+            items:
+              - key: homeserver.yaml
+                path: homeserver.yaml

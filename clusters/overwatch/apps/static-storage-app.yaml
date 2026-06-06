@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: static-storage
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: clusters/overwatch/system/static-storage
+  destination:
+    server: https://kubernetes.default.svc
+    # No namespace implies cluster level, or default
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

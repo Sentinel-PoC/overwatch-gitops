@@ -1,0 +1,60 @@
+---
+# Tempo — distributed tracing with S3 backend
+# OPS-519: Replacing Jaeger all-in-one (in-memory, 92 restarts) with Tempo
+#          backed by MinIO S3 (bucket: tempo-traces, endpoint: 192.168.12.58:9000).
+#
+# Deployment strategy: DUAL-RUN with Jaeger for one week.
+#   - This app deploys Tempo alongside the existing Jaeger instance (jaeger-app.yaml).
+#   - Alloy/otelcol dual-export patch (separate PR, apps/alloy/alloy-configmap.yaml)
+#     sends spans to both Jaeger and Tempo during the parallel-run window.
+#   - After one week of successful Tempo operation, Jaeger is decommissioned (separate PR).
+#
+# Pre-deploy checklist (operator):
+#   [ ] mc mb myminio/tempo-traces
+#   [ ] vault kv put secret/tempo/minio-creds access_key=<k> secret_key=<s>
+#   [ ] docker pull grafana/tempo:2.7.2; docker tag ...; docker push harbor.208.haist.farm/sentinel/tempo:2.7.2
+#   [ ] oc apply -f apps/tempo/scc.yaml     (SCC must pre-exist before Helm chart deploys)
+#   [ ] ExternalSecret tempo-minio-creds will be auto-created by this app via apps/tempo/external-secret.yaml
+#
+# Namespace: observability (pre-exists from Jaeger; managed-by label in apps/jaeger/namespace-observability.yaml)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: tempo
+      targetRevision: 1.10.3
+      helm:
+        releaseName: tempo
+        valueFiles:
+          - $values/clusters/overwatch/apps/tempo/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      path: apps/tempo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef
+        - .spec.target
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+  syncPolicy:
+    automated:
+      # prune: false during dual-run window — do not auto-delete Tempo if manifest is
+      # accidentally removed while Jaeger decommission is pending.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true

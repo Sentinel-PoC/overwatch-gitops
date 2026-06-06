@@ -1,0 +1,158 @@
+---
+# OPS-701: sign composite — cosign image signing (OCI 1.1 Referrers API)
+#
+# Purpose:
+#   Sign a container image with cosign using a local key. Stores the signature
+#   as an OCI 1.1 Referrers API accessory (not tag-style).
+#
+# Failure policy: MUST-SUCCEED.
+#   A failed signature means the image is unsigned; no downstream steps should
+#   proceed. Exit non-zero on any cosign error. No ::warning:: substitutions here.
+#
+# OCI 1.1 design decision (OPS-699 §4 Pattern D fix):
+#   OCI Image Manifest with a "subject" field referencing the signed image digest.
+#   Registries can discover signatures via the OCI Referrers API without tag-based
+#   lookups. Harbor, ECR, Quay all support OCI 1.1 as of 2025 (OPS-699 §7 refs).
+#
+#   Flag IS supported on "cosign sign" per cosign v2.4.3 source
+#   cmd/cosign/cli/options/sign.go (confirmed by composite-architect, OPS-701).
+#   Runtime note: cosign v2.4.3 also requires COSIGN_EXPERIMENTAL=1 for the
+#   oci-1-1 value to be accepted at runtime (confirmed by first-deploy run #857,
+#   OPS-702). The env var is set in STEP 2's env block.
+#
+# Cosign version pinning (OPS-699 §4 Pattern D fix):
+#   cosign-version input pins the binary. If runner already has cosign at the
+#   right version, skip install. Prevents silent version drift across builds.
+#
+# Root patterns fixed (OPS-699 §4):
+#   - Pattern A: this composite owns signing only; no scanning, no reporting
+#   - Pattern C: set -euo pipefail is intentional here (must-succeed semantics)
+#
+# Vendored in overwatch-gitops per OPS-239.
+# Source of truth: sentinel-admin/sentinel-iac/.forgejo/actions/sign/action.yml
+# Last synced: OPS-701 initial creation 2026-05-16
+
+name: "Cosign Image Sign (OCI 1.1)"
+description: >
+  Sign a container image digest with cosign using a PEM key.
+  Stores signature as OCI 1.1 Referrers API accessory (not tag-style).
+  Must-succeed: exits non-zero if signing fails.
+
+inputs:
+  image-ref:
+    description: >
+      Fully-qualified image reference with digest (preferred):
+      harbor.208.haist.farm/sentinel/myapp@sha256:abc123
+      Tag-only references work but digest is required for supply-chain integrity.
+    required: true
+
+  cosign-key:
+    description: "PEM-encoded cosign private key (from secret/cosign private_key)"
+    required: true
+
+  cosign-password:
+    description: "Cosign key passphrase (empty string if none)"
+    required: false
+    default: ""
+
+  cosign-version:
+    description: >
+      Pinned cosign version. If runner already has this version installed at
+      /usr/local/bin/cosign, the install step is skipped.
+      cosign v2.4.3 is the validated version on iac-control (OPS-701).
+    required: false
+    default: "v2.4.3"
+
+outputs:
+  image-digest:
+    description: "Echo of the input image digest (for step chaining)"
+    value: ${{ steps.sign.outputs.image_digest }}
+
+runs:
+  using: "composite"
+  steps:
+    # ---------------------------------------------------------------
+    # STEP 1: Ensure cosign is installed at pinned version
+    #
+    # If the runner already has the right version, skip download.
+    # Allows runners with pre-installed cosign to bypass the install.
+    # ---------------------------------------------------------------
+    - name: Ensure cosign at pinned version
+      shell: bash
+      env:
+        COSIGN_VERSION: ${{ inputs.cosign-version }}
+      run: |
+        set -euo pipefail
+        echo "=== OPS-701 sign: cosign version check ==="
+
+        INSTALLED_VERSION=""
+        if command -v cosign >/dev/null 2>&1; then
+          INSTALLED_VERSION=$(cosign version 2>/dev/null | grep -oE 'GitVersion:[[:space:]]+[v0-9.]+' | awk '{print $2}' || echo "")
+          echo "Runner has cosign: ${INSTALLED_VERSION}"
+        fi
+
+        if [ "${INSTALLED_VERSION}" = "${COSIGN_VERSION}" ]; then
+          echo "cosign ${COSIGN_VERSION} already installed — skipping download"
+        else
+          echo "Installing cosign ${COSIGN_VERSION}..."
+          ARCH=$(uname -m)
+          case "${ARCH}" in
+            x86_64) ARCH_SLUG="amd64" ;;
+            aarch64|arm64) ARCH_SLUG="arm64" ;;
+            *) echo "::error::Unsupported arch: ${ARCH}"; exit 1 ;;
+          esac
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          COSIGN_URL="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-${OS}-${ARCH_SLUG}"
+          curl -sL "${COSIGN_URL}" -o /tmp/cosign-download
+          chmod +x /tmp/cosign-download
+          sudo mv /tmp/cosign-download /usr/local/bin/cosign
+          INSTALLED_VERSION=$(cosign version 2>/dev/null | grep -oE 'GitVersion:[[:space:]]+[v0-9.]+' | awk '{print $2}' || echo "installed")
+          echo "cosign installed: ${INSTALLED_VERSION}"
+        fi
+
+        cosign version 2>/dev/null | head -4 || true
+
+    # ---------------------------------------------------------------
+    # STEP 2: Sign the image
+    #
+    # Must-succeed: set -euo pipefail. Any cosign error exits the step.
+    # Key is written to a temp file with restricted permissions; removed
+    # via trap on exit.
+    #
+    # Referrers API accessory. Flag supported on cosign sign per v2.4.3
+    # source cmd/cosign/cli/options/sign.go (verified by architect OPS-701).
+    # ---------------------------------------------------------------
+    - name: Sign image with cosign
+      id: sign
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        COSIGN_KEY: ${{ inputs.cosign-key }}
+        COSIGN_PASSWORD: ${{ inputs.cosign-password }}
+        # COSIGN_EXPERIMENTAL=1 is required by cosign v2.4.3 at runtime to enable
+        # oci-1-1 referrers mode. The --registry-referrers-mode flag IS registered
+        # on SignOptions (unlike AttestOptions), but the oci-1-1 value is gated
+        # behind this env var. Confirmed by first-deploy failure run #857 (OPS-702).
+        COSIGN_EXPERIMENTAL: "1"
+      run: |
+        set -euo pipefail
+        echo "=== OPS-701 sign: cosign sign ==="
+        echo "Image: ${IMAGE_REF}"
+
+        COSIGN_KEY_FILE=$(mktemp /tmp/cosign-XXXXXX.key)
+        chmod 600 "${COSIGN_KEY_FILE}"
+        printf '%s' "${COSIGN_KEY}" > "${COSIGN_KEY_FILE}"
+        trap "rm -f ${COSIGN_KEY_FILE}" EXIT
+
+        COSIGN_EXPERIMENTAL="${COSIGN_EXPERIMENTAL}" COSIGN_PASSWORD="${COSIGN_PASSWORD}" cosign sign \
+          --key "${COSIGN_KEY_FILE}" \
+          --tlog-upload=false \
+          --yes \
+          "${IMAGE_REF}"
+
+        echo "Image signed (OCI 1.1 Referrers API accessory)"
+
+        # Extract digest from image-ref (sha256: prefix if present)
+        IMAGE_DIGEST=$(echo "${IMAGE_REF}" | grep -oE 'sha256:[a-f0-9]+' || echo "")
+        echo "image_digest=${IMAGE_DIGEST}" >> "${GITHUB_OUTPUT}"
+        echo "Digest: ${IMAGE_DIGEST}"

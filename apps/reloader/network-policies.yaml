@@ -1,0 +1,64 @@
+# OPS-517: NetworkPolicy default-deny baseline for reloader namespace.
+# Reloader (Stakater Reloader) watches ConfigMaps and Secrets via the Kubernetes API
+# and triggers rolling restarts. Only needs kube API egress + DNS.
+# No inbound connections required — Reloader is a pure controller, not a server.
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: reloader
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution (required for Kubernetes API server discovery and general lookups)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: reloader
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow egress to Kubernetes API server (port 6443)
+# OKD canonical pattern: no destination restriction, port 6443 only.
+# Sourced from openshift-cluster-olm-operator allow-egress-to-api-server pattern.
+# Reloader uses the kube API to watch ConfigMaps/Secrets and trigger pod restarts.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: reloader
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6443
+          protocol: TCP

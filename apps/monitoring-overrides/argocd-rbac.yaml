@@ -1,0 +1,124 @@
+# OPS-212: Least-privilege RBAC for ArgoCD to manage AlertRelabelConfig in
+# openshift-monitoring.
+# OPS-852: Extended to include PrometheusRule (monitoring.coreos.com/v1) for
+# NFS alerts deployed alongside the AlertRelabelConfig in this app.
+#
+# Background:
+#   The openshift-gitops operator auto-creates a broader Role
+#   (openshift-gitops-argocd-application-controller, */*/*) in any namespace
+#   labeled argocd.argoproj.io/managed-by=openshift-gitops. That label is
+#   required for the cluster-scoped ArgoCD instance's informer to watch the
+#   namespace — applying it is what resolved OPS-212's "namespace not managed"
+#   comparison error.
+#
+#   The roles below are NOT the primary permission path: the application
+#   controller SA is already bound to cluster-admin cluster-wide via the
+#   pre-existing ClusterRoleBinding "cluster-admin-0". These manifests exist
+#   as a declarative, least-privilege safety net — they document the exact
+#   verbs/resources the monitoring-overrides app requires, and they persist
+#   through git even if the operator's auto-generated Role is ever disabled
+#   (e.g. .spec.defaultClusterScopedRoleDisabled=true on the ArgoCD CR).
+#
+#   Scope: alertrelabelconfigs + prometheusrules in openshift-monitoring only.
+#   No wildcards.
+#
+# Tracking: OPS-212, OPS-852
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-monitoring-overrides-app-controller
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-212
+rules:
+  - apiGroups:
+      - monitoring.openshift.io
+    resources:
+      - alertrelabelconfigs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - monitoring.coreos.com
+    resources:
+      - prometheusrules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-monitoring-overrides-app-controller
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-212
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-monitoring-overrides-app-controller
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
+---
+# argocd-server reads live state for the ArgoCD UI.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-monitoring-overrides-server
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-212
+rules:
+  - apiGroups:
+      - monitoring.openshift.io
+    resources:
+      - alertrelabelconfigs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - monitoring.coreos.com
+    resources:
+      - prometheusrules
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-monitoring-overrides-server
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-212
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-monitoring-overrides-server
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-server
+    namespace: openshift-gitops

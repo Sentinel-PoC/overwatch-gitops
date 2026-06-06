@@ -1,0 +1,114 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haists-website
+  namespace: haists-website
+  labels:
+    app.kubernetes.io/name: haists-website
+    app.kubernetes.io/instance: haists-website
+    app.kubernetes.io/component: website
+  annotations:
+    backstage.io/component: haists-website
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haists-website
+      app.kubernetes.io/instance: haists-website
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: haists-website
+        app.kubernetes.io/instance: haists-website
+        app.kubernetes.io/component: website
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: haists-website
+      containers:
+        - name: haists-website
+          image: harbor.208.haist.farm/sentinel/haists-website@sha256:14553c39f39ed3afee807f432daf5ffb7ed81f5d4144400a98da5ece23968629
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: haists-website-credentials
+          env:
+            - name: HW_OIDC_ISSUER
+              value: "https://auth-next.208.haist.farm/application/o/haists-website/"
+            - name: HW_OIDC_TOKEN_URL
+              value: "https://auth-next.208.haist.farm/application/o/token/"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haists-website
+  namespace: haists-website
+  labels:
+    app.kubernetes.io/name: haists-website
+    app.kubernetes.io/instance: haists-website
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: haists-website
+    app.kubernetes.io/instance: haists-website
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: haists-website
+  namespace: haists-website
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haists-website
+      app.kubernetes.io/instance: haists-website

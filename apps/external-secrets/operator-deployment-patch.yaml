@@ -1,0 +1,52 @@
+# [OPS-756] Patch operator-controller-manager to reduce API discovery frequency.
+#
+# Root cause: The ESO helm-operator (OLM-managed) performs full API group
+# discovery against every OKD API endpoint on every reconcile cycle (default
+# --reconcile-period=1m0s). This exhausts the client-go client-side rate
+# limiter (~1s throttle per discovery burst). The accumulated throttle delays
+# cause leader election renewal (renewDeadline=10s) to exceed context deadline
+# → Exit Code 1, crash loop (181+ restarts over 6 days).
+#
+# Fix: extend --reconcile-period from 1m to 10m. This reduces API discovery
+# to once every 10 minutes, giving the rate limiter 9+ minutes to refill
+# between bursts. Lease renewals proceed unimpeded between discovery windows.
+# The OperatorConfig spec is empty ({}) so reconcile does nothing substantive —
+# the longer period has no operational impact on secret syncing.
+#
+# Verified: pod ran 4m24s+ with 0 restarts (previously crashed every ~3min).
+# ESO controller pods (cluster-external-secrets-*) unaffected — 0 restarts.
+# ClusterSecretStore vault-backend: Ready=True (self-healed 2026-05-18T00:39Z).
+#
+# OLM caveat: OLM owns this Deployment via external-secrets-operator.v0.11.0 CSV.
+# The CSV was patched in-place (kubectl patch csv) to include --reconcile-period=10m0s.
+# If OLM replaces the CSV (e.g., operator upgrade), these args will be lost.
+# Re-apply:
+#   kubectl patch csv -n external-secrets external-secrets-operator.v0.11.0 \
+#     --type=json --patch='[{"op":"replace","path":"/spec/install/spec/deployments/0/spec/template/spec/containers/0/args","value":["--health-probe-bind-address=:8081","--metrics-bind-address=0.0.0.0:8080","--leader-elect","--leader-election-id=external-secrets-operator","--reconcile-period=10m0s"]}]'
+# Then if OLM hasn't propagated within 60s:
+#   oc apply --server-side --field-manager=sentinel-ops --force-conflicts -f apps/external-secrets/operator-deployment-patch.yaml
+#
+# Applied: 2026-05-20T19:35Z via kubectl patch csv + oc apply --server-side
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-secrets-operator-controller-manager
+  namespace: external-secrets
+  annotations:
+    sentinel.haist.farm/managed-by: oc-apply-ssa
+    sentinel.haist.farm/ops-issue: OPS-756
+    sentinel.haist.farm/note: >-
+      Reduces reconcile-period to 10m to prevent client-side rate limiter
+      exhaustion that causes leader election crash loop. See OPS-756.
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        args:
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=0.0.0.0:8080
+        - --leader-elect
+        - --leader-election-id=external-secrets-operator
+        - --reconcile-period=10m0s

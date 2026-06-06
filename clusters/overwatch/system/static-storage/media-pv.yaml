@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-media-root-pv
+spec:
+  capacity:
+    storage: 20Ti
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual-nfs
+  nfs:
+    path: /mnt/DATA/data
+    server: 192.168.12.205

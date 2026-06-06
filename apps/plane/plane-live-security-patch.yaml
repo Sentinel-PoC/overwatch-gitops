@@ -1,0 +1,61 @@
+---
+# OPS-767: Non-root securityContext patch for plane-live-wl
+#
+# All Plane backend pods ran as uid=0(root) under anyuid SCC (confirmed 2026-05-19).
+# plane-live-custom:v0.24.0 is built FROM node:18-alpine; the standard node:18-alpine
+# image ships with a `node` user at uid=1000 (confirmed via oc exec on peer images).
+#
+# plane-live serves the real-time collaboration (WebSocket) layer. It reads /app
+# at runtime only — no writes to the application directory required.
+# Port 3000 is non-privileged; no capability escalation required.
+#
+# UID 1000 is outside namespace UID range (1000970000+) so anyuid SCC remains assigned,
+# but the container executes as uid=1000 (non-root). KSV-0118 is satisfied.
+#
+# Note: plane-live-custom image has correct CMD baked in (unlike plane-frontend/admin/space
+# which need separate CMD patches). This patch owns only securityContext fields.
+#
+# Validate=false: allows partial container spec. Image field is REQUIRED even with
+# Validate=false — K8s API rejects the manifest otherwise with "Required value".
+# image must match the Helm-rendered value to avoid SSA field-ownership conflict.
+# Harbor confirms tags: v0.24.0, stable, axios-fix-20260419-223d2abb (same digest).
+# IgnoreExtraneous: suppresses RepeatedResourceWarning.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-live-wl
+  namespace: plane
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    backstage.io/component: plane
+spec:
+  selector:
+    matchLabels:
+      app.name: plane-plane-live
+  template:
+    metadata:
+      labels:
+        app.name: plane-plane-live
+        app.kubernetes.io/name: plane-live
+    spec:
+      # node:18-alpine image contains node user uid=1000 (confirmed via oc exec on peer images).
+      # Live/WebSocket server reads /app at runtime only — no writes needed.
+      # Port 3000 is non-privileged; no capability escalation required.
+      # anyuid SCC remains (UID 1000 is outside namespace range 1000970000+).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: plane-live
+        # OPS-785: image required so K8s API accepts the partial Deployment.
+        # Helm renders {live.image}:{planeVersion} = plane-live-custom:v0.24.0.
+        # Harbor: plane-live-custom:v0.24.0 and :stable point to same digest
+        # (sha256:e97e5ee160951aa396409ecaf11d481e0f54df32c3de092b08a6402664b3dcb7).
+        # pullPolicy Always from values.yaml — keeps this patch consistent.
+        image: harbor.208.haist.farm/sentinel/plane-live-custom@sha256:e97e5ee160951aa396409ecaf11d481e0f54df32c3de092b08a6402664b3dcb7
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]

@@ -1,0 +1,32 @@
+# OPS-1076: ArgoCD Application — manages ONLY the registry-mirror-ca ConfigMap in openshift-config.
+#
+# Design: all four deliverables (IDMS, ITMS, ConfigMap, Image/cluster oc patch) live in
+# clusters/overwatch/system/image-mirror/ for source-of-truth. This Application scopes to
+# registry-mirror-ca-cm.yaml only via directory.include, because IDMS and ITMS are
+# NOT in the AppProject default clusterResourceWhitelist and must be applied imperatively.
+# Pattern: operator applies cluster-scoped resources via oc; ArgoCD owns only the namespaced
+# ConfigMap. Same principle as machineconfigs-app.yaml / master-kubelet-autosize-reserved.yaml.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: image-mirror
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: clusters/overwatch/system/image-mirror
+    directory:
+      include: "registry-mirror-ca-cm.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-config
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

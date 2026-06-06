@@ -1,0 +1,86 @@
+---
+# Default deny-all for harbor namespace
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: harbor
+spec: {}
+---
+# Allow ingress from Istio IngressGateway to harbor nginx frontend
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: harbor
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: nginx
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway
+---
+# Allow harbor internal communication between all meshed components
+# Harbor has complex inter-service dependencies:
+#   nginx -> core, portal, registry
+#   core -> redis, registry, trivy, jobservice
+#   jobservice -> core, registry, redis
+#   registry -> redis
+#   trivy -> redis
+#   exporter -> core
+# All meshed pods use SA: harbor (except redis: harbor-redis, database: harbor-database)
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-harbor-internal
+  namespace: harbor
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/harbor/sa/harbor
+              - cluster.local/ns/harbor/sa/harbor-redis
+              - cluster.local/ns/harbor/sa/harbor-database
+---
+# Workaround: harbor-nginx connects to harbor-core via PassthroughCluster
+# which strips mTLS identity. Allow pod-network traffic to core specifically.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-harbor-internal-passthrough
+  namespace: harbor
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: core
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            ipBlocks:
+              - 10.128.0.0/14
+---
+# Same passthrough workaround for registry: nginx routes /v2/ requests to
+# registry via PassthroughCluster, stripping mTLS identity. Without this,
+# Docker registry v2 operations (login, push, pull) fail with RBAC denied.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-harbor-registry-passthrough
+  namespace: harbor
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: registry
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            ipBlocks:
+              - 10.128.0.0/14

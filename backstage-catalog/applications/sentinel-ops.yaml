@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sentinel-ops
+  description: Sentinel operations platform — etcd backup CronJobs, platform automation scripts, and operational tooling
+  annotations:
+    backstage.io/kubernetes-namespace: sentinel-ops
+    argocd/app-name: sentinel-ops
+  tags:
+    - operations
+    - backup
+    - platform
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

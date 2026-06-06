@@ -1,0 +1,52 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    policies.kyverno.io/title: Require Resource Limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    nist-controls: SC-6
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - backstage
+                - defectdojo
+                - demo
+                - harbor
+                - haists-website
+                - homepage
+                - keycloak
+                - matrix
+                - media
+                - monitoring
+                - netbox
+                - nfs-provisioner
+                - overwatch-console
+                - pangolin-internal
+                - plane
+                - sentinel-ops
+      validate:
+        message: All containers must have memory limits defined.
+        foreach:
+          - list: "request.object.spec.containers[]"
+            preconditions:
+              all:
+                - key: "{{ element.name }}"
+                  operator: AnyNotIn
+                  value:
+                    - istio-proxy
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.resources.limits.memory || '' }}"
+                    operator: Equals
+                    value: ""

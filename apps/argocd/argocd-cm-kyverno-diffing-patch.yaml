@@ -1,0 +1,51 @@
+---
+# argocd-cm patch: system-level ignoreDifferences for Kyverno-injected annotations
+#
+# OPS-766: Kyverno verify-images webhook writes kyverno.io/* annotations on resources
+# after every ArgoCD sync. ArgoCD detects these annotations as drift (desired state from
+# git lacks them) → triggers selfHeal re-sync → Kyverno re-annotates → ArgoCD re-syncs
+# → loop. autoHealAttemptsCount was observed at 64 on plane StatefulSets.
+#
+# This is the canonical ArgoCD fix per docs (https://argo-cd.readthedocs.io/en/stable/user-guide/diffing/):
+#   resource.customizations.ignoreDifferences.all — applies to ALL resources in ALL apps.
+# Preferred over per-Application ignoreDifferences because Kyverno webhooks annotate
+# any resource they evaluate, not just plane StatefulSets. DefectDojo, Backstage,
+# Harbor, Langfuse, and others are subject to the same drift loop.
+#
+# SCOPE: kyverno.io/* annotations only. Deliberately narrow — if any other annotation
+# key starting with kyverno.io appears (e.g. kyverno.io/policy-status), it is also
+# ignored for drift purposes but that is correct: all kyverno.io keys are controller
+# metadata, not user-set intent.
+#
+# HOW TO APPLY
+# ─────────────
+# This ConfigMap is NOT managed by an ArgoCD Application (bootstrapping problem:
+# ArgoCD cannot sync its own argocd-cm without a reconciliation loop).
+# Apply manually after PR merge:
+#
+#   oc apply --server-side \
+#     --field-manager=argocd-kyverno-diffing \
+#     --force-conflicts \
+#     -f apps/argocd/argocd-cm-kyverno-diffing-patch.yaml
+#
+# The --server-side + distinct field-manager ensures only the
+# resource.customizations.ignoreDifferences.all key is owned by this apply.
+# The operator-managed keys (oidc.config etc.) are preserved intact.
+#
+# VERIFY AFTER APPLY
+#   oc get cm argocd-cm -n openshift-gitops -o jsonpath='{.data.resource\.customizations\.ignoreDifferences\.all}'
+#   Expected output: jqPathExpressions with kyverno.io selector
+#
+# Tracking: OPS-766
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: openshift-gitops
+data:
+  # System-wide diffing: ignore kyverno.io/* annotations injected by Kyverno webhooks.
+  # This breaks the Kyverno-annotation → ArgoCD selfHeal → Kyverno-re-annotate loop.
+  # jq expression: select all annotation keys starting with "kyverno.io" and ignore them.
+  resource.customizations.ignoreDifferences.all: |
+    jqPathExpressions:
+    - '.metadata.annotations | keys[] | select(startswith("kyverno.io"))'

@@ -1,0 +1,48 @@
+---
+apiVersion: sailoperator.io/v1
+kind: Istio
+metadata:
+  name: default
+spec:
+  version: v1.28.3
+  namespace: istio-system
+  updateStrategy:
+    type: InPlace
+  values:
+    global:
+      istioNamespace: istio-system
+      # platform: openshift is set by Sail Operator on OCP installs as a
+      # stable default. Declared here so git is a superset of live and the
+      # field doesn't show as drift.
+      platform: openshift
+    pilot:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+      replicaCount: 2
+      autoscaleEnabled: false
+    meshConfig:
+      defaultConfig:
+        holdApplicationUntilProxyStarts: true
+      accessLogFile: /dev/stdout
+      accessLogEncoding: JSON
+      enablePrometheusMerge: true
+      enableAutoMtls: true
+      defaultProviders:
+        tracing:
+          - jaeger-otlp
+        metrics:
+          - prometheus
+      extensionProviders:
+        - name: jaeger-otlp
+          opentelemetry:
+            service: jaeger-collector.observability.svc.cluster.local
+            port: 4317
+      outboundTrafficPolicy:
+        mode: REGISTRY_ONLY
+    sidecarInjectorWebhook:
+      rewriteAppHTTPProbe: true

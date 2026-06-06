@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: arch-vault-reader
+  description: ArgoCD Vault reader — ServiceAccount and ClusterRoleBinding granting ArgoCD read access to cluster resources for the architecture view
+  annotations:
+    backstage.io/kubernetes-namespace: openshift-gitops
+    argocd/app-name: arch-vault-reader
+  tags:
+    - gitops
+    - rbac
+    - platform
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

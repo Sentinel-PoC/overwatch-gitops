@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: defectdojo-pg-iscsi
+  labels:
+    app: defectdojo-postgresql
+spec:
+  capacity:
+    storage: 15Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  volumeMode: Filesystem
+  # OPS-752: XFS journal tuning for 16K-physical-block iSCSI LUN.
+  # logbsize=256k: increases journal log buffer from default 32k → 256k, reducing
+  #   write amplification on the 16384-byte physical block iSCSI LUN.
+  # largeio: aligns XFS I/O with the 8 MiB optimal transfer size reported by the LUN.
+  # These options take effect on next pod restart (kubelet remounts PV).
+  mountOptions:
+    - logbsize=256k
+    - largeio
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    name: defectdojo-postgresql-data
+    namespace: defectdojo
+  iscsi:
+    targetPortal: "192.168.30.205:3260"
+    iqn: "iqn.2026-03.farm.haist:okd-defectdojo-pg"
+    lun: 0
+    fsType: "xfs"
+    readOnly: false

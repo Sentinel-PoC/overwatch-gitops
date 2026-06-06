@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: default-netpol
+  description: Default namespace network policies — baseline deny-all NetworkPolicy applied to the default namespace
+  annotations:
+    backstage.io/kubernetes-namespace: default
+    argocd/app-name: default-netpol
+  tags:
+    - networking
+    - policy
+    - security
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

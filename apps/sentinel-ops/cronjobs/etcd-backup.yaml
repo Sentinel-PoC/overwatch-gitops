@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: sentinel-ops
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(1),CP-9(8),AC-6,CM-2,SI-7"
+    compliance.sentinel/description: >
+      Runs `etcdctl snapshot save` against the in-cluster etcd Service every
+      6 hours, using client cert/key + CA bundle fetched from openshift-etcd
+      via the k8s API (cross-namespace get-only RBAC, OPS-240). Snapshot is
+      encrypted with Vault transit key etcd-backup (AES256-GCM96, CP-9(8))
+      then uploaded to MinIO bucket etcd-backups. CP-9(1) separation: existing
+      minio-replicate CronJob mirrors etcd-backups from MinIO primary
+      (192.168.12.58) to replica (192.168.12.59). OPS-241: hardened pod
+      (no hostPID/privileged/hostPath, runAsNonRoot, RO root, drop ALL caps,
+      seccomp RuntimeDefault) — AC-6 least privilege, CM-2 baseline-aligned.
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            # OPS-242: required by allow-etcd-backup-egress NetworkPolicy podSelector
+            app.kubernetes.io/name: etcd-backup
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          serviceAccountName: etcd-backup-sa
+          restartPolicy: Never
+          # OPS-241: pod hardening (α scope). nodeSelector/tolerations dropped —
+          # this pod no longer needs to run on a control-plane node because the
+          # nsenter→cluster-backup.sh path is replaced by k8s-API + etcdctl
+          # against the in-cluster etcd Service. hostPID dropped (no nsenter).
+          # Hardened pod + container securityContext per AC-6 / CM-2 baseline.
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: etcd-backup
+              image: harbor.208.haist.farm/sentinel/sentinel-ops@sha256:838e68fbed676320273e70cb12c698d6076780e2f3a2389e17195d4d64a49049
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "/opt/etcd-backup/etcd-backup.sh"]
+              env:
+                - name: VAULT_ADDR
+                  value: "https://vault.208.haist.farm"
+                - name: VAULT_K8S_ROLE
+                  value: "etcd-backup"
+                - name: MINIO_BUCKET
+                  value: "etcd-backups"
+              envFrom:
+                - secretRef:
+                    name: ops-minio-creds
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: scripts
+                  mountPath: /opt/etcd-backup
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: scripts
+              configMap:
+                name: etcd-backup-scripts
+                defaultMode: 0755

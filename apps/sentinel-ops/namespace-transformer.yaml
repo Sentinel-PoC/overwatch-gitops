@@ -1,0 +1,23 @@
+# NamespaceTransformer — sentinel-ops kustomization
+#
+# PURPOSE: Apply namespace: sentinel-ops to all resources that do NOT already
+# have an explicit namespace set, while leaving resources with an explicit
+# namespace (e.g. RoleBinding etcd-backup-etcd-reader in openshift-etcd)
+# untouched.
+#
+# CONTEXT (OPS-249): The root kustomization namespace: field creates a
+# NamespaceTransformer that overrides ALL namespaced resources to sentinel-ops,
+# including the cross-namespace RoleBinding that must live in openshift-etcd.
+# Replacing the root namespace: field with this transformer (unsetOnly: true)
+# preserves existing explicit namespaces while still namespacing every other
+# resource to sentinel-ops.
+#
+# TESTED: kustomize v5.3.0 — all non-RoleBinding namespaced resources receive
+# sentinel-ops; RoleBinding etcd-backup-etcd-reader retains openshift-etcd.
+apiVersion: builtin
+kind: NamespaceTransformer
+metadata:
+  name: sentinel-ops-namespace
+  namespace: sentinel-ops
+namespace: sentinel-ops
+unsetOnly: true

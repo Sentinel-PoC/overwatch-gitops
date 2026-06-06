@@ -1,0 +1,37 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: forgejo-rest-api
+  description: Forgejo REST API v1 for repository and project management (migrated from GitLab OPS-16)
+  links:
+    - url: https://forgejo.208.haist.farm
+      title: Forgejo
+      icon: dashboard
+  tags:
+    - source-control
+    - forgejo
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: Forgejo REST API
+      version: "v1"
+      description: Forgejo API at forgejo.208.haist.farm - repositories under sentinel-admin org
+    servers:
+      - url: https://forgejo.208.haist.farm/api/v1
+    paths:
+      /repos/search:
+        get:
+          summary: Search repositories
+      /orgs/{org}/repos:
+        get:
+          summary: List organization repositories
+      /repos/{owner}/{repo}/branches:
+        get:
+          summary: List repository branches

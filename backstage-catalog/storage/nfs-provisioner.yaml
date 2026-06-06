@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: nfs-provisioner
+  description: NFS dynamic storage provisioner for OKD persistent volumes
+  annotations:
+    backstage.io/kubernetes-namespace: nfs-provisioner
+    argocd/app-name: nfs-provisioner
+  tags:
+    - storage
+    - nfs
+    - provisioner
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

@@ -1,0 +1,31 @@
+# Root app-of-apps — the ONE Application that must be manually applied.
+# Everything else flows from this: adding/removing *-app.yaml files in
+# clusters/overwatch/ auto-creates/removes ArgoCD Applications.
+#
+# Bootstrap: oc apply -f clusters/overwatch/root-app.yaml
+# (from iac-control with KUBECONFIG set)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-app
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: clusters/overwatch
+    directory:
+      recurse: true
+      include: '*-app.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

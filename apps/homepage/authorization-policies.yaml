@@ -1,0 +1,25 @@
+---
+# Default deny-all for homepage namespace
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: homepage
+spec: {}
+---
+# Allow ingress from Istio IngressGateway to homepage
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: homepage
+spec:
+  selector:
+    matchLabels:
+      app: homepage
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway

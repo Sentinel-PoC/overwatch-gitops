@@ -1,0 +1,26 @@
+# OPS-751: NetworkPolicy baseline for the istio-ingress namespace.
+# All external cluster traffic passes through this gateway — wrong deny-all
+# drops all externally-accessible services. Policies are deliberately permissive
+# on egress (backend routing) and restrictive on ingress (port 8080 only from router).
+# See apps/istio-ingress/network-policies.yaml for full architecture notes.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-ingress-netpol
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/istio-ingress
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-ingress
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

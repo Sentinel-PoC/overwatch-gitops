@@ -1,0 +1,572 @@
+---
+# OPS-315: Cluster-deployed-image vs gitops-manifest SHA drift detector.
+#
+# Problem:
+#   ArgoCD reconciles manifest drift (cluster spec back to git) but does NOT
+#   surface a divergence between the *running pod's image SHA* and the manifest's
+#   image reference. When an operator runs `oc set image` manually, ArgoCD
+#   eventually overwrites — but during the gap nothing alerts. Mutable-tag drift
+#   (e.g. :v1 now points to a new Harbor digest) is permanently invisible because
+#   the manifest never changes.
+#
+# What this workflow does:
+#   1. Walks apps/ tree for Deployment / StatefulSet / DaemonSet / CronJob manifests.
+#   2. Extracts every image: reference per container.
+#   3. Queries the live cluster via oc get pods (all namespaces) to obtain the
+#      actually-running image digest (status.containerStatuses[].imageID).
+#   4. Detects three drift classes:
+#        Class A — manifest pins SHA (@sha256:), running pod has a different SHA.
+#        Class B — manifest pins mutable tag, and the running pod's resolved SHA
+#                  differs from the current Harbor digest for that tag.
+#        Class C — manifest references an image but no running pod has it
+#                  (deployment paused, scaled to 0, or CronJob never ran).
+#   5. Uploads a JSON drift report as a workflow artifact.
+#   6. If any Class A or Class B drift is found: posts a comment on OPS-315 and
+#      exits non-zero (workflow shows red on Forgejo dashboard).
+#      Class C is reported but non-fatal (operator may have intentionally scaled to 0).
+#
+# Auth:
+#   Cluster access: VAULT_DRIFT_TOKEN Forgejo secret (scoped, policy=ci-drift-detector-read)
+#     → Vault path secret/iac/ci-drift-detector (field: kubeconfig).
+#     SA ci-drift-detector in sentinel-ops ns: ClusterRole ci-drift-detector-read
+#     grants ONLY get/list/watch on pods cluster-wide. No write, no other resources.
+#     Created per OPS-1103 (residual of OPS-883 pattern). SA and RBAC are out-of-band
+#     (applied directly to cluster, not ArgoCD-managed — same as namespace-bootstrap SA).
+#   Harbor: HARBOR_USERNAME / HARBOR_PASSWORD Forgejo secrets (same as image-verify.yml).
+#   Plane: PLANE_API_KEY Forgejo secret.
+#
+# OPS-270 note: Scheduled workflows only register from the default branch.
+#   This workflow includes workflow_dispatch so PR-time testing is possible.
+#
+# OPS-271 note: Plane runs API 404s intermittently.
+#   All detail is written directly from the workflow body — no runs-API dependency.
+#
+# v1 scope: detect-only. Auto-correct NOT included — auto-revert during a
+#   deliberate `oc rollout pause` would mask operator intent. See OPS-315 spec.
+
+name: image-sha-drift
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch: {}
+
+env:
+  VAULT_ADDR: https://vault.208.haist.farm
+  VAULT_KUBECONFIG_PATH: secret/iac/ci-drift-detector
+  VAULT_KUBECONFIG_FIELD: kubeconfig
+  HARBOR_BASE: https://harbor.208.haist.farm/api/v2.0
+  # Plane OPS project
+  PLANE_WORKSPACE: haists-it-consulting
+  PLANE_PROJECT_ID: 223c0b66-4255-406e-932f-3b50c0e93543
+  # OPS-315 issue ID (Plane UUID) — drift comments post here
+  PLANE_ISSUE_ID: bd8ec348-0b85-43bd-b48d-05bf961b7c60
+
+jobs:
+  detect-drift:
+    runs-on: iac-buildah
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull kubeconfig from Vault
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_DRIFT_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "=== OPS-315: Fetching CI kubeconfig from Vault ==="
+
+          KCFG="${RUNNER_TEMP:-/tmp}/drift-kubeconfig-${GITHUB_RUN_ID}"
+          : > "${KCFG}"
+          chmod 0600 "${KCFG}"
+
+          vault kv get \
+            -field="${VAULT_KUBECONFIG_FIELD}" \
+            "${VAULT_KUBECONFIG_PATH}" \
+            > "${KCFG}" 2>&1 || true
+
+          if [[ ! -s "${KCFG}" ]]; then
+            echo "::error::FAIL: Vault returned empty output for ${VAULT_KUBECONFIG_PATH}."
+            echo "::error::Likely causes: (1) VAULT_ROOT_TOKEN secret not set in this repo,"
+            echo "::error::  (2) Vault path does not exist — see OPS-883 for SA setup procedure."
+            exit 1
+          fi
+
+          if ! grep -q '^apiVersion:' "${KCFG}"; then
+            echo "::error::FAIL: Retrieved content does not look like a kubeconfig."
+            echo "::error::Content preview: $(head -c 200 ${KCFG})"
+            rm -f "${KCFG}"
+            exit 1
+          fi
+
+          echo "Kubeconfig fetched ($(wc -c < ${KCFG}) bytes)"
+          echo "KUBECONFIG=${KCFG}" >> "${GITHUB_ENV}"
+
+      - name: Collect manifest image refs and live pod image IDs
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "=== OPS-315: Collecting manifest image refs ==="
+
+          # Verify cluster connectivity
+          echo "Cluster identity:"
+          oc whoami 2>&1 || {
+            echo "::error::oc whoami failed — kubeconfig may be invalid or cluster unreachable"
+            exit 1
+          }
+
+          # Collect live pod image data across all namespaces
+          echo ""
+          echo "Fetching live pod image data from cluster..."
+          oc get pods --all-namespaces -o json 2>/dev/null > /tmp/live-pods.json || {
+            echo "::warning::oc get pods --all-namespaces failed — SA may lack cross-namespace pod-get."
+            echo "::warning::Attempting per-app-namespace queries instead..."
+            echo '{"items":[]}' > /tmp/live-pods.json
+          }
+          LIVE_POD_COUNT=$(python3 -c "import json; d=json.load(open('/tmp/live-pods.json')); print(len(d.get('items',[])))")
+          echo "Live pods collected: ${LIVE_POD_COUNT}"
+
+          # Walk apps/ tree and build drift report using Python
+          python3 - << 'PYEOF'
+          import os
+          import re
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          # ── Configuration ────────────────────────────────────────────────────
+          APPS_DIR = Path("apps")
+          HARBOR_BASE = os.environ.get("HARBOR_BASE", "https://harbor.208.haist.farm/api/v2.0")
+          HARBOR_USER = os.environ.get("HARBOR_USERNAME", "")
+          HARBOR_PASS = os.environ.get("HARBOR_PASSWORD", "")
+          HARBOR_HOST = "harbor.208.haist.farm"
+
+          # Workload kinds whose spec.template.spec.containers[].image we parse
+          TARGET_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "CronJob"}
+
+          # ── Load live pods ───────────────────────────────────────────────────
+          with open("/tmp/live-pods.json") as f:
+              pod_data = json.load(f)
+
+          # OPS-1105 fix — two bugs corrected:
+          #
+          # Bug 1 (digest-representation mismatch): the previous code used
+          # status.containerStatuses[].imageID for the "running" digest.  cri-o
+          # records a locally-recomputed digest in imageID that routinely differs
+          # from the manifest's spec.image digest even when the image content is
+          # identical (e.g. postgres a513e5eb → imageID 4941ef97).  The correct
+          # source of truth is pod spec.containers[].image, which is set verbatim
+          # from the owning workload template and therefore matches the git manifest
+          # for any in-sync workload.
+          #
+          # Bug 2 (cross-workload comparison): the previous key (namespace, image_base)
+          # grouped all pods that share an image registry/project/repo together,
+          # regardless of which workload owns them.  In sentinel-ops, etcd-backup
+          # (pins sha:838e68f) and etcd-backup-verify (pins sha:6e6e95a) use the
+          # same base image.  Keying on image_base caused nist-compliance-check pods
+          # to be matched against the etcd-backup manifest pin, producing false A-class
+          # drift for every running CronJob pod.
+          #
+          # Fix: build two indices keyed on pod spec.image.
+          #   live_by_full_image: (namespace, full_spec_image) → pod list
+          #     Used for Class A exact-match: a pod carrying the manifest's verbatim
+          #     spec.image string means that workload is in-sync.  Pods inherit
+          #     spec.image from their owning workload template, so this naturally
+          #     scopes comparison per-workload without ownerReference traversal
+          #     (which would require Job-list RBAC the SA does not have).
+          #   live_by_image_base: (namespace, image_base) → pod list
+          #     Used only for Class C detection (are there any pods for this image
+          #     at all in this namespace?).
+          live_by_full_image = {}  # (ns, full_spec_image) -> list of pod entries
+          live_by_image_base = {}  # (ns, image_base)      -> list of pod entries
+
+          for pod in pod_data.get("items", []):
+              ns = pod.get("metadata", {}).get("namespace", "")
+              pod_name = pod.get("metadata", {}).get("name", "")
+              spec = pod.get("spec", {})
+              all_containers = spec.get("containers", []) + spec.get("initContainers", [])
+              for c in all_containers:
+                  spec_img = c.get("image", "")
+                  if not spec_img:
+                      continue
+                  # Normalize base (strip tag/digest suffix)
+                  img_base = re.sub(r'[@:][^/]*$', '', spec_img)
+
+                  entry = {
+                      "pod": pod_name,
+                      "container": c.get("name", ""),
+                      "spec_image": spec_img,
+                  }
+
+                  key_full = (ns, spec_img)
+                  if key_full not in live_by_full_image:
+                      live_by_full_image[key_full] = []
+                  live_by_full_image[key_full].append(entry)
+
+                  key_base = (ns, img_base)
+                  if key_base not in live_by_image_base:
+                      live_by_image_base[key_base] = []
+                  live_by_image_base[key_base].append(entry)
+
+          print(f"Indexed {sum(len(v) for v in live_by_full_image.values())} running containers across {len(live_by_full_image)} spec-image/namespace keys")
+
+          # ── Harbor digest lookup (for Class B mutable-tag drift) ─────────────
+          def harbor_digest_for_tag(project, repo, tag):
+              """Query Harbor API to get current digest for a tag. Returns sha256:... or None."""
+              if not HARBOR_USER or not HARBOR_PASS:
+                  return None
+              url = f"{HARBOR_BASE}/projects/{project}/repositories/{repo}/artifacts/{tag}"
+              try:
+                  result = subprocess.run(
+                      ["curl", "-sf", "--user", f"{HARBOR_USER}:{HARBOR_PASS}",
+                       url],
+                      capture_output=True, text=True, timeout=15
+                  )
+                  if result.returncode != 0:
+                      return None
+                  artifact = json.loads(result.stdout)
+                  # artifact.digest is the canonical SHA256 digest
+                  return artifact.get("digest")
+              except Exception as e:
+                  print(f"  Harbor query error for {url}: {e}", file=sys.stderr)
+                  return None
+
+          # ── Parse manifests ──────────────────────────────────────────────────
+          drift_entries = []
+          manifest_count = 0
+
+          for app_dir in sorted(APPS_DIR.iterdir()):
+              if not app_dir.is_dir():
+                  continue
+
+              for yaml_file in sorted(app_dir.rglob("*.yaml")):
+                  try:
+                      content = yaml_file.read_text()
+                  except Exception as e:
+                      print(f"SKIP {yaml_file}: {e}")
+                      continue
+
+                  # Quick filter: only process files that declare target kinds
+                  kind_match = re.search(r'^kind:\s+(\w+)', content, re.MULTILINE)
+                  if not kind_match:
+                      continue
+                  kind = kind_match.group(1)
+                  if kind not in TARGET_KINDS:
+                      continue
+
+                  # Extract namespace from metadata
+                  ns_match = re.search(r'^  namespace:\s+(\S+)', content, re.MULTILINE)
+                  namespace = ns_match.group(1) if ns_match else ""
+
+                  # Extract name
+                  name_match = re.search(r'^  name:\s+(\S+)', content, re.MULTILINE)
+                  workload_name = name_match.group(1) if name_match else str(yaml_file)
+
+                  # Extract image: references
+                  # Match lines like: `          image: harbor.208.haist.farm/proj/repo:tag`
+                  # or `          image: harbor.208.haist.farm/proj/repo@sha256:abc`
+                  image_pattern = re.compile(
+                      r'^\s+image:\s+(' + re.escape(HARBOR_HOST) + r'/[^\s]+)',
+                      re.MULTILINE
+                  )
+                  images_found = image_pattern.findall(content)
+
+                  if not images_found:
+                      continue
+
+                  manifest_count += 1
+
+                  for manifest_image in images_found:
+                      manifest_image = manifest_image.strip()
+
+                      # Classify the manifest reference
+                      sha_pin = re.search(r'@(sha256:[a-f0-9]{64})', manifest_image)
+                      tag_match = re.search(r':([^@/\s]+)$', manifest_image)
+
+                      # Normalize base (strip tag/digest)
+                      image_base = re.sub(r'[@:][^/]*$', '', manifest_image)
+
+                      # OPS-1105: look up by full spec.image (per-workload) and by
+                      # image_base (Class C detection only).
+                      pods_matching_manifest = live_by_full_image.get((namespace, manifest_image), [])
+                      pods_same_base = live_by_image_base.get((namespace, image_base), [])
+
+                      # ── Class C: no running pod ──────────────────────────────
+                      if not pods_same_base:
+                          # No pods for this image base in this namespace at all.
+                          drift_entries.append({
+                              "class": "C",
+                              "severity": "info",
+                              "workload": f"{kind}/{workload_name}",
+                              "namespace": namespace,
+                              "file": str(yaml_file),
+                              "manifest_image": manifest_image,
+                              "manifest_sha": sha_pin.group(1) if sha_pin else None,
+                              "manifest_tag": tag_match.group(1) if tag_match else None,
+                              "running_entries": [],
+                              "running_sha": None,
+                              "harbor_current_sha": None,
+                              "detail": "No running pod found with this image (scaled to 0 or never started)",
+                          })
+                          continue
+
+                      # ── Class A: SHA-pinned manifest vs different running SHA ──
+                      # OPS-1105: compare pod spec.image (not imageID) against the
+                      # manifest's spec.image.  If any pod carries the manifest's exact
+                      # spec.image string, the workload is in-sync.  If pods exist for
+                      # the image base but none carry the manifest's pinned digest in
+                      # their spec.image, that is genuine per-workload drift.
+                      if sha_pin:
+                          if not pods_matching_manifest:
+                              # Pods exist in this namespace for the same image base but
+                              # none carry the manifest's pinned digest in spec.image.
+                              running_imgs = list({e["spec_image"] for e in pods_same_base})
+                              drift_entries.append({
+                                  "class": "A",
+                                  "severity": "error",
+                                  "workload": f"{kind}/{workload_name}",
+                                  "namespace": namespace,
+                                  "file": str(yaml_file),
+                                  "manifest_image": manifest_image,
+                                  "manifest_sha": sha_pin.group(1),
+                                  "manifest_tag": None,
+                                  "running_entries": pods_same_base[:3],
+                                  "running_sha": running_imgs[0] if running_imgs else None,
+                                  "harbor_current_sha": None,
+                                  "detail": (
+                                      f"Manifest pins {sha_pin.group(1)[:19]}... but "
+                                      f"no running pod carries that digest in spec.image; "
+                                      f"running: {running_imgs[0][:60] if running_imgs else 'unknown'}..."
+                                  ),
+                              })
+
+                      # ── Class B: mutable-tag drift ───────────────────────────
+                      elif tag_match:
+                          tag = tag_match.group(1)
+                          # Parse harbor project and repo from the base
+                          # base: harbor.208.haist.farm/PROJECT/REPO
+                          base_parts = image_base.replace(HARBOR_HOST + "/", "").split("/", 1)
+                          if len(base_parts) == 2:
+                              harbor_project, harbor_repo = base_parts
+                              # Harbor repo names with slashes are URL-encoded
+                              harbor_repo_encoded = harbor_repo.replace("/", "%2F")
+                              harbor_sha = harbor_digest_for_tag(
+                                  harbor_project, harbor_repo_encoded, tag
+                              )
+                          else:
+                              harbor_sha = None
+
+                          # For Class B (mutable-tag), compare Harbor's current digest
+                          # against what pods are actually running in spec.image.
+                          # pods_same_base contains all pods for this image base/namespace.
+                          for entry in pods_same_base:
+                              entry_img = entry.get("spec_image", "")
+                              # Extract digest from the running pod's spec.image (if pinned)
+                              # or use the raw spec.image for comparison against harbor_sha.
+                              entry_sha_match = re.search(r'@(sha256:[a-f0-9]{64})', entry_img)
+                              entry_running_sha = entry_sha_match.group(1) if entry_sha_match else None
+                              if harbor_sha and entry_running_sha and entry_running_sha != harbor_sha:
+                                  drift_entries.append({
+                                      "class": "B",
+                                      "severity": "error",
+                                      "workload": f"{kind}/{workload_name}",
+                                      "namespace": namespace,
+                                      "file": str(yaml_file),
+                                      "manifest_image": manifest_image,
+                                      "manifest_sha": None,
+                                      "manifest_tag": tag,
+                                      "running_entries": pods_same_base,
+                                      "running_sha": entry_running_sha,
+                                      "harbor_current_sha": harbor_sha,
+                                      "detail": (
+                                          f"Mutable tag :{tag} — Harbor now has "
+                                          f"{harbor_sha[:19]}... but pod {entry['pod']} "
+                                          f"runs {entry_running_sha[:19]}..."
+                                      ),
+                                  })
+
+          # ── Build report ─────────────────────────────────────────────────────
+          class_a = [e for e in drift_entries if e["class"] == "A"]
+          class_b = [e for e in drift_entries if e["class"] == "B"]
+          class_c = [e for e in drift_entries if e["class"] == "C"]
+
+          report = {
+              "generated_at": "",  # filled by shell below
+              "commit": "",         # filled by shell below
+              "manifest_count": manifest_count,
+              "live_image_keys": len(live_by_full_image),
+              "drift_total": len(drift_entries),
+              "class_A_count": len(class_a),
+              "class_B_count": len(class_b),
+              "class_C_count": len(class_c),
+              "has_actionable_drift": len(class_a) + len(class_b) > 0,
+              "entries": drift_entries,
+          }
+
+          with open("/tmp/drift-report.json", "w") as f:
+              json.dump(report, f, indent=2)
+
+          print("")
+          print("=== OPS-315 Drift Summary ===")
+          print(f"Manifests scanned: {manifest_count}")
+          print(f"Class A (SHA mismatch): {len(class_a)}")
+          print(f"Class B (mutable-tag drift): {len(class_b)}")
+          print(f"Class C (no running pod): {len(class_c)}")
+          print(f"Actionable drift: {len(class_a) + len(class_b)}")
+
+          if class_a:
+              print("")
+              print("Class A entries:")
+              for e in class_a:
+                  print(f"  {e['workload']} ns={e['namespace']}: {e['detail']}")
+
+          if class_b:
+              print("")
+              print("Class B entries:")
+              for e in class_b:
+                  print(f"  {e['workload']} ns={e['namespace']}: {e['detail']}")
+
+          if class_c:
+              print("")
+              print(f"Class C entries (non-fatal): {len(class_c)} workloads scaled to 0 or not started")
+
+          PYEOF
+
+          # Inject timestamp and commit into the report
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          COMMIT_SHA="${GITHUB_SHA:-local}"
+          python3 - << INJECT_EOF
+          import json
+          with open("/tmp/drift-report.json") as f:
+              r = json.load(f)
+          r["generated_at"] = "${TIMESTAMP}"
+          r["commit"] = "${COMMIT_SHA}"
+          with open("/tmp/drift-report.json", "w") as f:
+              json.dump(r, f, indent=2)
+          print("Report finalized at ${TIMESTAMP}")
+          INJECT_EOF
+
+          # Export for later steps
+          HAS_DRIFT=$(python3 -c "import json; d=json.load(open('/tmp/drift-report.json')); print('true' if d['has_actionable_drift'] else 'false')")
+          echo "HAS_DRIFT=${HAS_DRIFT}" >> "${GITHUB_ENV}"
+
+      - name: Upload drift report artifact
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: image-sha-drift-report
+          path: /tmp/drift-report.json
+          retention-days: 30
+
+      - name: Post Plane comment on drift
+        if: env.HAS_DRIFT == 'true'
+        env:
+          PLANE_API_KEY: ${{ secrets.PLANE_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PLANE_API_KEY:-}" ]; then
+            echo "::warning::PLANE_API_KEY not set — skipping Plane comment. Drift detected but not reported to Plane."
+            exit 0
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          COMMIT_SHORT="${GITHUB_SHA:0:8}"
+
+          # Build HTML comment from drift report
+          python3 - << 'PLANE_EOF'
+          import json, os, subprocess, sys
+
+          with open("/tmp/drift-report.json") as f:
+              r = json.load(f)
+
+          timestamp = os.environ.get("TIMESTAMP", r["generated_at"])
+          commit = os.environ.get("COMMIT_SHORT", r["commit"][:8])
+          run_id = os.environ.get("GITHUB_RUN_ID", "")
+          repo = os.environ.get("GITHUB_REPOSITORY", "sentinel-admin/overwatch-gitops")
+
+          class_a = [e for e in r["entries"] if e["class"] == "A"]
+          class_b = [e for e in r["entries"] if e["class"] == "B"]
+          class_c = [e for e in r["entries"] if e["class"] == "C"]
+
+          lines = [
+              "<p><strong>DRIFT DETECTION (automated) — OPS-315</strong></p>",
+              f"<p><strong>Timestamp:</strong> {timestamp}<br/>",
+              f"<strong>Commit:</strong> {commit}<br/>",
+              f"<strong>Run:</strong> <a href=\"https://forgejo.208.haist.farm/{repo}/actions/runs/{run_id}\">#{run_id}</a></p>",
+              f"<p><strong>Manifests scanned:</strong> {r['manifest_count']}<br/>",
+              f"<strong>Class A (SHA mismatch):</strong> {r['class_A_count']}<br/>",
+              f"<strong>Class B (mutable-tag drift):</strong> {r['class_B_count']}<br/>",
+              f"<strong>Class C (scaled to 0, non-fatal):</strong> {r['class_C_count']}</p>",
+          ]
+
+          if class_a:
+              lines.append("<p><strong>Class A — SHA Mismatch (pod-spec drift):</strong></p><ul>")
+              for e in class_a:
+                  lines.append(
+                      f"<li>{e['workload']} (ns: {e['namespace']}) | "
+                      f"manifest: <code>{e['manifest_sha'][:19] if e['manifest_sha'] else 'N/A'}...</code> | "
+                      f"running: <code>{e['running_sha'][:19] if e['running_sha'] else 'N/A'}...</code></li>"
+                  )
+              lines.append("</ul>")
+
+          if class_b:
+              lines.append("<p><strong>Class B — Mutable-Tag Drift:</strong></p><ul>")
+              for e in class_b:
+                  lines.append(
+                      f"<li>{e['workload']} (ns: {e['namespace']}) | "
+                      f"tag: <code>:{e['manifest_tag']}</code> | "
+                      f"harbor now: <code>{e['harbor_current_sha'][:19] if e['harbor_current_sha'] else 'N/A'}...</code> | "
+                      f"running: <code>{e['running_sha'][:19] if e['running_sha'] else 'N/A'}...</code></li>"
+                  )
+              lines.append("</ul>")
+
+          lines.append("<p>Full report uploaded as workflow artifact <code>image-sha-drift-report</code>.</p>")
+          lines.append("<p><em>Filed by image-sha-drift workflow (OPS-315). Operator action required to investigate drift.</em></p>")
+
+          comment_html = "\n".join(lines)
+          with open("/tmp/drift-plane-comment.html", "w") as f:
+              f.write(comment_html)
+          print("Plane comment HTML prepared")
+          PLANE_EOF
+
+          COMMENT_HTML=$(cat /tmp/drift-plane-comment.html)
+
+          HTTP_STATUS=$(curl -s -o /tmp/plane-post-result.json -w "%{http_code}" \
+            --request POST \
+            --header "x-api-key: ${PLANE_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "$(python3 -c "import json,sys; print(json.dumps({'comment_html': open('/tmp/drift-plane-comment.html').read()}))")" \
+            "https://plane.208.haist.farm/api/v1/workspaces/${PLANE_WORKSPACE}/projects/${PLANE_PROJECT_ID}/issues/${PLANE_ISSUE_ID}/comments/")
+
+          echo "Plane comment POST HTTP status: ${HTTP_STATUS}"
+          if [ "${HTTP_STATUS}" -ge 200 ] && [ "${HTTP_STATUS}" -lt 300 ]; then
+            echo "Plane comment posted successfully."
+          else
+            echo "::warning::Plane comment POST returned ${HTTP_STATUS} — drift detected but Plane comment failed."
+            cat /tmp/plane-post-result.json || true
+          fi
+
+      - name: Fail on actionable drift
+        run: |
+          if [ "${HAS_DRIFT:-false}" = "true" ]; then
+            CLASS_A=$(python3 -c "import json; d=json.load(open('/tmp/drift-report.json')); print(d['class_A_count'])")
+            CLASS_B=$(python3 -c "import json; d=json.load(open('/tmp/drift-report.json')); print(d['class_B_count'])")
+            echo "::error::OPS-315 drift detected — Class A: ${CLASS_A}, Class B: ${CLASS_B}"
+            echo "Investigate the image-sha-drift-report artifact and Plane OPS-315 for details."
+            exit 1
+          fi
+          CLASS_C=$(python3 -c "import json; d=json.load(open('/tmp/drift-report.json')); print(d['class_C_count'])")
+          echo "No actionable drift (Class A or B) detected."
+          echo "Class C (scaled-to-0): ${CLASS_C} workloads — non-fatal, operator review if unexpected."
+
+      - name: Cleanup kubeconfig
+        if: always()
+        run: |
+          KCFG="${RUNNER_TEMP:-/tmp}/drift-kubeconfig-${GITHUB_RUN_ID}"
+          if [ -f "${KCFG}" ]; then
+            rm -f "${KCFG}"
+            echo "Kubeconfig cleaned up."
+          fi

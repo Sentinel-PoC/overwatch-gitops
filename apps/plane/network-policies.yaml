@@ -1,0 +1,162 @@
+# OPS-747: NetworkPolicy default-deny baseline for plane namespace.
+# Deferred from OPS-517 Phase 1b (2026-05-18).
+#
+# IMPORTANT: The existing networkpolicy.yaml (restrict-plane-live-ingress, SEC-59)
+# is a compensating control for CVE-2026-40175 (axios RCE). DO NOT remove it.
+# These policies are ADDITIVE alongside the SEC-59 control.
+#
+# Pods in scope (Helm chart: plane-ce 1.4.1, verified 2026-05-18):
+#   Deployments: plane-web-wl, plane-api-wl, plane-admin-wl, plane-space-wl,
+#                plane-live-wl, plane-worker-wl, plane-beat-worker-wl
+#   Custom:      postgresql-deployment.yaml (apps/plane/postgresql-deployment.yaml)
+#   Helm subcharts: plane-redis (valkey/redis), plane-rabbitmq (bitnami/rabbitmq)
+#
+# Traffic requirements:
+#   - Ingress: OCP HAProxy Router (openshift-ingress ns) → plane-web:3000, plane-space:3000
+#   - Ingress: plane-backup namespace → postgresql:5432 (pg backup CronJob — OPS-481)
+#   - Intra-namespace: all pods communicate (API→PG, workers→rabbitmq, workers→redis, etc.)
+#   - Egress: DNS, kube-API (workers use K8s jobs/watches for task scheduling)
+#
+# Using broad podSelector:{} + allow-same-namespace because Helm chart labels
+# vary across releases and sub-chart labels are not stable.
+#
+# NIST: SC-7, SC-7(5), AC-4
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: plane
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: plane
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow all intra-namespace pod communication (bidirectional)
+# Covers: API↔PostgreSQL, workers↔RabbitMQ, workers↔Redis, web↔API,
+#         beat-worker↔rabbitmq, init containers reaching pg/redis.
+# Using broad podSelector:{} because Helm chart sub-chart labels are not stable.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: plane
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# Allow ingress from OCP HAProxy Router (openshift-ingress namespace)
+# All Plane routes share host plane.208.haist.farm and are path-based:
+#   /  /live /spaces /god-mode  → plane-web / plane-live / plane-space / plane-admin : 3000
+#   /api  /auth                 → plane-api  : 8000
+#   /uploads                    → plane-minio: 9000
+# OKD standard router namespace label (confirmed live 2026-05-18).
+#
+# OPS-768 (2026-05-20): ports 8000 + 9000 added. The original OPS-747 policy
+# allowed :3000 only, which silently blackholed the entire /api + /auth + /uploads
+# surface (plane-api:8000, plane-minio:9000) — a ~6h outage of the Plane API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-router
+  namespace: plane
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 3000
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+---
+# Allow ingress from plane-backup namespace (OPS-481 pg backup CronJob → postgresql:5432)
+# The plane-backup namespace runs a PostgreSQL backup CronJob that connects to
+# the plane PostgreSQL instance. See apps/plane-backup/cronjob.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-plane-backup-ingress
+  namespace: plane
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: plane-backup
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# Allow egress to Kubernetes API server (port 6443)
+# Plane workers use kube-API for job orchestration and CRD watches.
+# OKD canonical pattern — no destination restriction, port 6443 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: plane
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6443
+          protocol: TCP

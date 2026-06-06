@@ -1,0 +1,30 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: argocd
+  description: GitOps continuous delivery platform managing all OKD workloads via app-of-apps
+  annotations:
+    backstage.io/techdocs-ref: "dir:../../techdocs/argocd"
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=argocd-server
+    backstage.io/kubernetes-namespace: openshift-gitops
+    argocd/app-name: openshift-gitops
+  links:
+    - url: https://argocd.208.haist.farm
+      title: ArgoCD Dashboard
+      icon: dashboard
+  tags:
+    - gitops
+    - cd
+    - deployment
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:keycloak
+    - component:external-secrets-operator
+  providesApis:
+    - argocd-api

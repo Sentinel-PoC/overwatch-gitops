@@ -1,0 +1,50 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: netbox-api
+  description: NetBox REST API for network documentation, IPAM, and device inventory management
+  links:
+    - url: https://netbox.208.haist.farm/api/schema/
+      title: NetBox OpenAPI Schema
+      icon: code
+    - url: https://netbox.208.haist.farm
+      title: NetBox Dashboard
+      icon: dashboard
+  tags:
+    - networking
+    - ipam
+    - documentation
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: NetBox REST API
+      version: "4.x"
+      description: NetBox network documentation and IPAM REST API. OpenAPI schema available at /api/schema/
+    servers:
+      - url: https://netbox.208.haist.farm/api
+    paths:
+      /dcim/devices/:
+        get:
+          summary: List devices
+      /dcim/sites/:
+        get:
+          summary: List sites
+      /ipam/ip-addresses/:
+        get:
+          summary: List IP addresses
+      /ipam/prefixes/:
+        get:
+          summary: List prefixes
+      /virtualization/virtual-machines/:
+        get:
+          summary: List virtual machines
+      /extras/tags/:
+        get:
+          summary: List tags

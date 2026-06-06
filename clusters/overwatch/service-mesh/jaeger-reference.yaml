@@ -1,0 +1,40 @@
+# Jaeger is installed via Jaeger Operator (OLM) + direct oc apply
+# NOT managed by ArgoCD due to namespace-scoped ArgoCD limitation with
+# cluster-scoped CRDs (Jaeger CRDs are Cluster-scoped).
+#
+# Installation steps:
+# 1. Jaeger Operator installed via OLM Subscription (openshift-operators ns)
+# 2. observability namespace created
+# 3. Jaeger all-in-one CR applied to observability namespace
+# 4. OKD Route created for jaeger-query
+#
+# NOTE: Jaeger Operator v1.65+ injects --reporter.grpc.tls.* flags that are
+# not supported by Jaeger v2 binary. Pin image to v1.62.0 until operator is fixed.
+#
+# ArgoCD Application below is kept as reference but NOT applied:
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jaeger-reference
+  namespace: openshift-gitops
+  annotations:
+    sentinel.haist.farm/managed-by: jaeger-operator
+    sentinel.haist.farm/note: >-
+      Reference only. Jaeger CR is cluster-scoped and cannot be managed
+      by namespace-scoped ArgoCD.
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/jaeger
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true

@@ -1,0 +1,154 @@
+# overwatch-gitops CI/CD - validation only (ArgoCD handles deployments)
+---
+stages:
+  - lint
+  - security-scan
+
+yamllint:
+  stage: lint
+  tags:
+    - iac
+  script:
+    - echo "Running yamllint on all YAML files..."
+    - yamllint -c .yamllint.yml -f parsable . | tee yamllint-report.txt
+  artifacts:
+    when: always
+    paths:
+      - yamllint-report.txt
+    expire_in: 30 days
+  allow_failure: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+trivy-config:
+  stage: security-scan
+  tags:
+    - iac
+  script:
+    - echo "Running Trivy K8s manifest scan..."
+    - trivy fs --scanners misconfig --format json --output trivy-k8s-report.json .
+    - echo "Summary:"
+    - trivy fs --scanners misconfig --severity HIGH,CRITICAL .
+  artifacts:
+    when: always
+    paths:
+      - trivy-k8s-report.json
+    expire_in: 30 days
+  allow_failure: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+gitleaks:
+  stage: security-scan
+  tags:
+    - iac
+  script:
+    - echo "Running gitleaks secret detection..."
+    - gitleaks detect --source . --report-format json --report-path gitleaks-report.json --no-git
+    - echo "No secrets detected."
+  artifacts:
+    when: always
+    paths:
+      - gitleaks-report.json
+    expire_in: 30 days
+  allow_failure: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# [OPS-246] Checkov K8s job removed 2026-04-19. Trivy (trivy-config above) is the
+# authoritative K8s misconfig scanner. Checkov --framework kubernetes helm produced
+# 302 Medium findings in DefectDojo that duplicated Trivy K8s results (seccomp,
+# UID/GID, privilege escalation, capabilities) with different titles but identical
+# check coverage (~100% overlap). Removing the scanner-side job causes DefectDojo to
+# deactivate the 302 findings as "not re-reported" on the next scan cycle.
+
+# =============================================================================
+# DefectDojo - Upload scan results (after security-scan stage)
+# Uses reimport-scan with auto_create_context to deduplicate findings across
+# pipeline runs. Product "Overwatch GitOps" separates findings from sentinel-iac.
+# =============================================================================
+upload-trivy-to-defectdojo:
+  stage: security-scan
+  tags:
+    - iac
+  needs:
+    - job: trivy-config
+      artifacts: true
+  allow_failure: true
+  script:
+    - |
+      if [ ! -f trivy-k8s-report.json ]; then
+        echo "No trivy-k8s-report.json found, skipping"
+        exit 0
+      fi
+      echo "Uploading Trivy K8s scan to DefectDojo..."
+      RESPONSE=$(curl -sk -X POST "${DEFECTDOJO_URL}/api/v2/reimport-scan/" \
+        -H "Authorization: Token ${DEFECTDOJO_API_KEY}" \
+        -F "scan_type=Trivy Scan" \
+        -F "product_name=Overwatch GitOps" \
+        -F "engagement_name=Main Branch CI/CD" \
+        -F "test_title=Trivy K8s Misconfig" \
+        -F "auto_create_context=true" \
+        -F "file=@trivy-k8s-report.json" \
+        -F "active=true" \
+        -F "verified=false" \
+        -F "close_old_findings=true" \
+        -F "minimum_severity=Info" \
+        -F "scan_date=$(date +%Y-%m-%d)" \
+        -F "tags=trivy,k8s,gitops" \
+        -w "\n%{http_code}")
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      echo "HTTP Status: $HTTP_CODE"
+      if [ "$HTTP_CODE" -ge 400 ]; then
+        echo "Upload failed: $(echo "$RESPONSE" | head -1)"
+        exit 1
+      fi
+      echo "Trivy scan uploaded successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+upload-gitleaks-to-defectdojo:
+  stage: security-scan
+  tags:
+    - iac
+  needs:
+    - job: gitleaks
+      artifacts: true
+  allow_failure: true
+  script:
+    - |
+      if [ ! -f gitleaks-report.json ]; then
+        echo "No gitleaks-report.json found, skipping"
+        exit 0
+      fi
+      echo "Uploading Gitleaks scan to DefectDojo..."
+      RESPONSE=$(curl -sk -X POST "${DEFECTDOJO_URL}/api/v2/reimport-scan/" \
+        -H "Authorization: Token ${DEFECTDOJO_API_KEY}" \
+        -F "scan_type=Gitleaks Scan" \
+        -F "product_name=Overwatch GitOps" \
+        -F "engagement_name=Main Branch CI/CD" \
+        -F "test_title=Gitleaks Secret Detection" \
+        -F "auto_create_context=true" \
+        -F "file=@gitleaks-report.json" \
+        -F "active=true" \
+        -F "verified=false" \
+        -F "close_old_findings=true" \
+        -F "minimum_severity=Info" \
+        -F "scan_date=$(date +%Y-%m-%d)" \
+        -F "tags=gitleaks,secrets,gitops" \
+        -w "\n%{http_code}")
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      echo "HTTP Status: $HTTP_CODE"
+      if [ "$HTTP_CODE" -ge 400 ]; then
+        echo "Upload failed: $(echo "$RESPONSE" | head -1)"
+        exit 1
+      fi
+      echo "Gitleaks scan uploaded successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# [OPS-246] upload-checkov-to-defectdojo job removed alongside the checkov job above.
+# No checkov-k8s-report.json is produced any longer — upload job had no work to do.

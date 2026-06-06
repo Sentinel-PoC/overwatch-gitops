@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falcosidekick-config
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falcosidekick
+    app.kubernetes.io/component: event-forwarder
+data:
+  # OPS-205 (2026-04-30): Path C (Wazuh node-agent stdout capture) failed —
+  # OKD cluster nodes have no Wazuh agents. Zero Falco events in Wazuh Indexer
+  # confirmed via query. Path A chosen: falcosidekick → Wazuh Indexer (OpenSearch).
+  #
+  # Non-secret config. Secrets (Indexer username/password) are in the
+  # falcosidekick-wazuh-indexer Secret created by ExternalSecret.
+  ELASTICSEARCH_HOSTPORT: "https://192.168.12.100:9200"
+  ELASTICSEARCH_INDEX: "falco-events"
+  ELASTICSEARCH_TYPE: "_doc"
+  # TLS verification disabled: Wazuh Indexer uses a self-signed certificate.
+  # Operator note: replace with a proper cert + set to "true" when CA is available.
+  ELASTICSEARCH_TLSVERIFICATION: "false"
+  ELASTICSEARCH_ENABLECOMPRESSION: "false"
+  ELASTICSEARCH_MINIMUMPRIORITY: "notice"
+  # Forward all Wazuh Indexer events — no throttling for first iteration
+  LISTENPORT: "2801"
+  DEBUG: "false"
+  # OPS-522 — Secondary Loki sink for Grafana visibility (additive; Elasticsearch/Wazuh sink above unchanged)
+  # Gateway service: loki-gateway.observability.svc.cluster.local port 80
+  # OPS-1069: corrected from 3100 — loki-gateway Service exposes only port 80;
+  # port 3100 is for direct loki-write/read/backend component access, not the gateway.
+  # Auth disabled (Loki auth_enabled: false — single-tenant lab)
+  # Grafana query: {app="falcosidekick"} in Loki datasource (uid: loki-logs)
+  LOKI_HOSTPORT: "http://loki-gateway.observability.svc.cluster.local:80"
+  LOKI_MINIMUMPRIORITY: "notice"

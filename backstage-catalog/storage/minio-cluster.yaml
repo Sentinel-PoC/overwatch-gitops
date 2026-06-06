@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: minio-cluster
+  description: MinIO S3-compatible object storage cluster (primary + replica)
+  links:
+    - url: https://minio.208.haist.farm
+      title: MinIO Console
+      icon: dashboard
+  tags:
+    - storage
+    - s3
+    - object-storage
+    - vm-service
+    - overwatch
+spec:
+  type: vm
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  providesApis:
+    - minio-s3-api

@@ -1,0 +1,59 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harbor
+  namespace: harbor
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harbor-database
+  namespace: harbor
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harbor-redis
+  namespace: harbor
+---
+# Built-in anyuid SCC for ALL service accounts (base permission)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: harbor-anyuid
+  namespace: harbor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: harbor
+    namespace: harbor
+  - kind: ServiceAccount
+    name: harbor-database
+    namespace: harbor
+  - kind: ServiceAccount
+    name: harbor-redis
+    namespace: harbor
+---
+# kyverno-anyuid SCC for chart pods that have seccomp profiles
+# Do NOT include harbor-database — postgres:16 needs privilege
+# escalation for gosu user switching, which kyverno-anyuid blocks
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: harbor-kyverno-anyuid
+  namespace: harbor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:kyverno-anyuid
+subjects:
+  - kind: ServiceAccount
+    name: harbor
+    namespace: harbor
+  - kind: ServiceAccount
+    name: harbor-redis
+    namespace: harbor

@@ -1,0 +1,36 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: minio-s3-api
+  description: MinIO S3-compatible object storage API
+  links:
+    - url: https://minio.208.haist.farm
+      title: MinIO Console
+      icon: dashboard
+  tags:
+    - storage
+    - s3
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: MinIO S3 API
+      version: "1.x"
+      description: S3-compatible object storage (primary at 192.168.12.58, replica at 192.168.12.59)
+    servers:
+      - url: https://minio.208.haist.farm
+    paths:
+      /{bucket}:
+        get:
+          summary: List bucket objects
+      /{bucket}/{key}:
+        get:
+          summary: Get object
+        put:
+          summary: Put object

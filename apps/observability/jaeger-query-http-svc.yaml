@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-query-http
+  namespace: observability
+  labels:
+    app.kubernetes.io/component: query-http
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/name: jaeger
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-query
+      port: 16686
+      targetPort: 16686
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: all-in-one
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/managed-by: jaeger-operator
+    app.kubernetes.io/name: jaeger

@@ -1,0 +1,35 @@
+# OPS-481 Phase 4: ArgoCD Application for langfuse-backup (Langfuse PostgreSQL → MinIO).
+# CP-9 / CP-9(1): daily pg_dump to separate MinIO hardware (.58).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: langfuse-backup
+  namespace: openshift-gitops
+  labels:
+    app.kubernetes.io/part-of: langfuse-backup
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/langfuse-backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: langfuse-backup
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

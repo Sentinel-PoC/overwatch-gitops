@@ -1,0 +1,37 @@
+---
+# OPS-398: ArgoCD Application for Scanopy network discovery platform.
+# Pattern mirrors clusters/overwatch/apps/ntfy-app.yaml (raw manifests, single source).
+#
+# PRE-REQUISITES before enabling sync:
+# 1. Mirror ghcr.io/scanopy/scanopy/daemon:v0.16.2 to harbor.208.haist.farm/sentinel/scanopy-daemon:v0.16.2
+#    and run sign-harbor-image workflow (Kyverno verify-image-signatures is Enforce).
+# 2. Mirror ghcr.io/scanopy/scanopy/server:v0.16.2 to harbor.208.haist.farm/sentinel/scanopy-server:v0.16.2
+#    and run sign-harbor-image workflow.
+# 3. Create Vault secret:
+#    vault kv put secret/scanopy db_password=<random> admin_password=<random>
+#    (ExternalSecret in apps/scanopy/external-secret.yaml reads this path.)
+# 4. postgres:16.13-alpine3.23 image is already in harbor (reused from netbox).
+#    If postgres:17-alpine is preferred, mirror and sign separately.
+#
+# After prerequisites are met, ArgoCD will sync and create all resources.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scanopy
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/scanopy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: scanopy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,17 @@
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: langfuse
+  namespace: langfuse
+spec:
+  host: langfuse.208.haist.farm
+  to:
+    kind: Service
+    name: langfuse-web
+    weight: 100
+  port:
+    targetPort: 3000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

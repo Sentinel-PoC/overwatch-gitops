@@ -1,0 +1,41 @@
+---
+# OPS-1182 Phase 3: PolicyException for kiali under disallow-latest-tag.
+#
+# kiali is a MANUALLY-deployed istio dashboard addon (NOT ArgoCD-managed — deployed
+# via helm by the operator due to OKD ClusterRole constraints; see
+# clusters/overwatch/service-mesh/kiali-reference.yaml). Its init container uses
+# registry.access.redhat.com/ubi9/ubi-minimal:latest, baked into the upstream kiali
+# chart — an image we do not control via GitOps. The kiali main image IS pinned
+# (harbor.208.haist.farm/sentinel/kiali:v2.26.1).
+#
+# Without this exception, flipping disallow-latest-tag to Enforce would deny a kiali
+# pod restart (init :latest) and take the dashboard down. This is the only genuine
+# new-admission offender cluster-wide (all backup CronJobs are digest-pinned; the
+# failing backup/minio-bucket Jobs are stale grandfathered snapshots).
+#
+# Proper fix (GitOps-manage kiali + pin/replace the ubi-minimal init image) tracked
+# separately — this exception is the proportionate interim for a third-party,
+# non-GitOps addon image we don't own.
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: kiali-latest-tag-exception
+  namespace: kyverno
+spec:
+  exceptions:
+  - policyName: disallow-latest-tag
+    ruleNames:
+    - no-latest-tag
+    - autogen-no-latest-tag
+  match:
+    any:
+    - resources:
+        kinds:
+        - Pod
+        - Deployment
+        - ReplicaSet
+        namespaces:
+        - istio-system
+        names:
+        - kiali
+        - kiali-*

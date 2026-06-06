@@ -1,0 +1,25 @@
+# SEC-85: ArgoCD Application to deploy egress NetworkPolicies for openshift-gitops.
+# Destination namespace = openshift-gitops (the ArgoCD control-plane namespace).
+# CreateNamespace=false — namespace must already exist (it does; ArgoCD operator owns it).
+# Mirrors wiring of default-netpol-app.yaml exactly.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-netpol
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/argocd-netpol
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

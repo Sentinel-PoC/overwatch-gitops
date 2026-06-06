@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synapse
+  namespace: matrix
+  labels:
+    app: synapse
+  annotations:
+    backstage.io/component: matrix-synapse
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: synapse
+  template:
+    metadata:
+      labels:
+        app: synapse
+        app.kubernetes.io/name: synapse
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432"
+    spec:
+      serviceAccountName: matrix-sa
+      securityContext:
+        runAsUser: 991
+        runAsGroup: 991
+        fsGroup: 991
+        runAsNonRoot: true
+      initContainers:
+        - name: config-renderer
+          image: harbor.208.haist.farm/sentinel/synapse@sha256:485b29c3650d35e79554906085c908426cec3c8848a72a1ff19aacda9344aad7
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp /config-template/log.config /rendered-config/log.config
+              sed "s|\${SYNAPSE_DB_PASSWORD}|$SYNAPSE_DB_PASSWORD|g" /config-template/homeserver.yaml |
+              sed "s|\${SYNAPSE_REGISTRATION_SHARED_SECRET}|$SYNAPSE_REGISTRATION_SHARED_SECRET|g" |
+              sed "s|\${SYNAPSE_MACAROON_SECRET_KEY}|$SYNAPSE_MACAROON_SECRET_KEY|g" |
+              sed "s|\${SYNAPSE_FORM_SECRET}|$SYNAPSE_FORM_SECRET|g" |
+              sed "s|\${MAS_SHARED_SECRET}|$MAS_SHARED_SECRET|g" > /rendered-config/homeserver.yaml
+          env:
+            - name: SYNAPSE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-postgresql-credentials
+                  key: POSTGRES_PASSWORD
+            - name: SYNAPSE_REGISTRATION_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-synapse-secrets
+                  key: registration_shared_secret
+            - name: SYNAPSE_MACAROON_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-synapse-secrets
+                  key: macaroon_secret_key
+            - name: SYNAPSE_FORM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-synapse-secrets
+                  key: form_secret
+            - name: MAS_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mas-credentials
+                  key: shared_secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: synapse-config
+              mountPath: /config-template
+            - name: rendered-config
+              mountPath: /rendered-config
+      containers:
+        - name: synapse
+          image: harbor.208.haist.farm/sentinel/synapse@sha256:485b29c3650d35e79554906085c908426cec3c8848a72a1ff19aacda9344aad7
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8008
+              name: http
+          env:
+            - name: SYNAPSE_CONFIG_PATH
+              value: /config/homeserver.yaml
+          volumeMounts:
+            - name: rendered-config
+              mountPath: /config
+            - name: synapse-data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          readinessProbe:
+            httpGet:
+              path: /_matrix/client/versions
+              port: 8008
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /_matrix/client/versions
+              port: 8008
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 10
+      volumes:
+        - name: synapse-config
+          configMap:
+            name: synapse-config
+        - name: rendered-config
+          emptyDir: {}
+        - name: synapse-data
+          persistentVolumeClaim:
+            claimName: synapse-media-store

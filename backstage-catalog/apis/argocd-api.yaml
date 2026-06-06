@@ -1,0 +1,37 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: argocd-api
+  description: ArgoCD REST API for GitOps application management
+  links:
+    - url: https://argocd.208.haist.farm
+      title: ArgoCD Dashboard
+      icon: dashboard
+  tags:
+    - gitops
+    - cd
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: ArgoCD API
+      version: "2.x"
+      description: ArgoCD API managing OKD workloads via app-of-apps pattern
+    servers:
+      - url: https://argocd.208.haist.farm/api/v1
+    paths:
+      /applications:
+        get:
+          summary: List all applications
+      /applications/{name}:
+        get:
+          summary: Get application details
+      /applications/{name}/sync:
+        post:
+          summary: Sync an application

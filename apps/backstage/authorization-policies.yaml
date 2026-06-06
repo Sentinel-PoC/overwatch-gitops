@@ -1,0 +1,25 @@
+---
+# Default deny-all for backstage namespace
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: backstage
+spec: {}
+---
+# Allow ingress from Istio IngressGateway to backstage app
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: backstage
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway

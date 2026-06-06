@@ -1,0 +1,47 @@
+---
+# SCC binding for Tempo — mirrors Loki pattern (apps/loki/scc.yaml)
+# Tempo chart runs containers as UID 10001 (non-root) with fsGroup 10001.
+# OpenShift's restricted-v2 SCC allows non-root UIDs from the namespace
+# assigned range — but only if the UID falls within it. On this cluster the
+# observability namespace UID range starts at 1000780000, so UID 10001 is
+# out of range for restricted-v2. anyuid SCC grants the specific UID without
+# granting arbitrary root access.
+#
+# OPS-519
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: tempo-anyuid
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+groups: []
+priority: null
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - KILL
+  - MKNOD
+  - SETUID
+  - SETGID
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: RunAsAny
+users:
+  - system:serviceaccount:observability:tempo
+volumes:
+  - configMap
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret

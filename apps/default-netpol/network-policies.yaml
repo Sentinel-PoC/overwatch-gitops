@@ -1,0 +1,48 @@
+# OPS-747: NetworkPolicy default-deny baseline for default namespace.
+# Deferred from OPS-517 Phase 1b (2026-05-18).
+#
+# The default namespace had 1 Completed debug pod as of 2026-05-18 audit.
+# Completed pods do not have active network interfaces, so this policy
+# carries zero disruption risk. DNS allow included for any future workloads.
+# Note: The Kubernetes 'default' namespace is the implicit ns for workloads
+# with no namespace specified — keeping a default-deny here enforces hygiene.
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: default
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: default
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP

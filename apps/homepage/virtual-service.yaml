@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: homepage
+  namespace: homepage
+spec:
+  hosts:
+    - home.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: homepage.homepage.svc.cluster.local
+            port:
+              number: 3000

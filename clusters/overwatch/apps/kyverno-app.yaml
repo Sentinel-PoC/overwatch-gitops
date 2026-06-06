@@ -1,0 +1,118 @@
+---
+# OPS-113 — Kyverno ArgoCD Application (Phase 1 — manual sync only)
+#
+# Phase 1: No automated.selfHeal — operator manually triggers first sync
+# to confirm Synced+Healthy before enabling selfHeal in Phase 2 (separate MR).
+#
+# ignoreDifferences rationale (SEC-34 pattern, name-scoped):
+#   - kyverno-svc Service: Kyverno controller annotates this dynamically.
+#   - Webhook configs: Kyverno admission controller self-manages caBundle,
+#     rules, and failurePolicy at runtime; ArgoCD must not revert these.
+#     managedFieldsManagers: [kyverno] scopes the ignore to Kyverno's
+#     own field-manager entries, not all managers.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: openshift-gitops
+spec:
+  project: default
+  sources:
+    - repoURL: harbor.208.haist.farm/sentinel
+      chart: kyverno
+      targetRevision: 3.3.4
+      helm:
+        releaseName: kyverno
+        valueFiles:
+          - $values/apps/kyverno-helm/values.yaml
+    - repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  ignoreDifferences:
+    - kind: Service
+      name: kyverno-svc
+      jqPathExpressions:
+        - .metadata.annotations
+    - kind: ValidatingWebhookConfiguration
+      name: kyverno-cleanup-validating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: ValidatingWebhookConfiguration
+      name: kyverno-exception-validating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: ValidatingWebhookConfiguration
+      name: kyverno-global-context-validating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: ValidatingWebhookConfiguration
+      name: kyverno-policy-validating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: ValidatingWebhookConfiguration
+      name: kyverno-resource-validating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: ValidatingWebhookConfiguration
+      name: kyverno-ttl-validating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: MutatingWebhookConfiguration
+      name: kyverno-policy-mutating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: MutatingWebhookConfiguration
+      name: kyverno-resource-mutating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+    - kind: MutatingWebhookConfiguration
+      name: kyverno-verify-mutating-webhook-cfg
+      jqPathExpressions:
+        - .webhooks[].caBundle
+        - .webhooks[].rules
+        - .webhooks[].failurePolicy
+      managedFieldsManagers:
+        - kyverno
+  syncPolicy:
+    automated:
+      prune: false       # Kyverno is enforcement infra; never garbage-collect controllers
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+      - SkipDryRunOnMissingResource=true

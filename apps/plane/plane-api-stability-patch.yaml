@@ -1,0 +1,139 @@
+# OPS-766 + OPS-767 + OPS-951: Plane API combined SSA patch — stability + non-root securityContext + livenessProbe
+#
+# This file consolidates three previously-separate patches for plane-api-wl:
+#   - plane-api-stability-patch.yaml (OPS-766): GUNICORN_WORKERS=2 + readinessProbe.timeoutSeconds:5
+#   - plane-api-security-patch.yaml (OPS-767): non-root securityContext (uid=1001)
+#   - plane-liveness-probes.yaml (OPS-951): livenessProbe — consolidated here to avoid
+#     SSA atomic-struct conflict on readinessProbe. K8s SSA treats readinessProbe and
+#     livenessProbe as atomic structs; if two different field managers each claim one probe
+#     but not the other, K8s rejects the apply (one manager's unclaimed probe gets orphaned).
+#     argocd-controller must own both probes in a single manifest to avoid this.
+#
+# Merged here (PR #247 rebase on main after PR #248 landed) to avoid trivy KSV-0118
+# false-positive: trivy scans each YAML in isolation. A stability-only patch without
+# securityContext triggers KSV-0118 even though the runtime merged state (via SSA) has
+# the securityContext from the security patch. Combining into one file eliminates the
+# per-file scan gap.
+#
+# ── OPS-766 fields ────────────────────────────────────────────────────────────────
+#
+# Fix A — GUNICORN_WORKERS=2 (env var):
+#   plane-api-wl runs ./bin/docker-entrypoint-api.sh which honours GUNICORN_WORKERS.
+#   Default is 1 (chart does not set this). With a single worker, every gunicorn
+#   graceful restart (triggered by --max-requests 1200) leaves an ~8-second gap
+#   where no process serves HTTP. Probe fails → pod restart cascade.
+#   Setting GUNICORN_WORKERS=2 means restarts stagger — one worker reloads while
+#   the other continues to serve. No gap.
+#   Helm chart (plane-ce 1.4.1) does not expose workerCount in values.yaml;
+#   env var override is the only supported override path without chart modification.
+#
+# Fix B — readinessProbe.timeoutSeconds: 5 (up from 1):
+#   The chart-rendered probe has timeoutSeconds:1. Even with two workers,
+#   momentary GC pauses or slow Django startup can exhaust a 1-second window.
+#   Bumping to 5 s gives the process breathing room without materially delaying
+#   traffic routing to a healthy pod.
+#   The probe path (GET /) is a lightweight Django URL dispatch check; 5 s is
+#   still safely below the 10 s periodSeconds and the 30 x failureThreshold.
+#   plane-app.yaml ignoreDifferences entry for
+#   .spec.template.spec.containers[0].readinessProbe.timeoutSeconds (added in this
+#   PR) prevents ArgoCD + Helm from writing 1 back on subsequent syncs.
+#
+# ── OPS-767 fields ────────────────────────────────────────────────────────────────
+#
+# Non-root securityContext (uid=1001):
+#   plane-backend:v0.24.0 (python:3.12.5-alpine) has no USER directive but sets
+#   chmod -R 777 /code, making all app files world-writable.
+#   Verification (oc debug --as-user=1001, 2026-05-19):
+#     - ip link show: OK (read-only netlink, works non-root)
+#     - Write to /code/plane/logs/: OK (777 perms)
+#     - gunicorn startup: "Application startup complete." — NO errors
+#   UID 1001 is outside namespace UID range (1000970000+) so anyuid SCC remains
+#   assigned, but container executes as uid=1001 (non-root). KSV-0118 satisfied.
+#
+# ── OPS-951 fields ────────────────────────────────────────────────────────────────
+#
+# livenessProbe (HTTP GET /):
+#   TrueNAS upgrade reboot 2026-05-25 took 188s. iSCSI replacement_timeout=120s
+#   caused sessions to drop 68s before TrueNAS returned, wedging pods that had lost
+#   their backing store. Without livenessProbe, K8s did not detect wedged pods and
+#   they required manual intervention.
+#   Consolidated here (not in plane-liveness-probes.yaml) to avoid SSA atomic-struct
+#   conflict: K8s requires a single field-manager to own both readinessProbe and
+#   livenessProbe; partial ownership causes apply rejection.
+#
+# ── Pattern notes ─────────────────────────────────────────────────────────────────
+#
+#   Applied via SSA (ServerSideApply=true,Validate=false) matching the established
+#   pattern for plane-web-cmd-patch.yaml, plane-admin-cmd-patch.yaml,
+#   plane-space-cmd-patch.yaml. IgnoreExtraneous suppresses the
+#   RepeatedResourceWarning from this partial Deployment appearing alongside the
+#   Helm-rendered copy. Validate=false lets ArgoCD skip the K8s API validation
+#   requiring containers[0].image on a full Deployment spec.
+#   Image field included (must match Helm-rendered value) so SSA field-merge
+#   sees identical values from both managers — no ownership conflict on image.
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-api-wl
+  namespace: plane
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    backstage.io/component: plane
+spec:
+  selector:
+    matchLabels:
+      app.name: plane-plane-api
+  template:
+    metadata:
+      labels:
+        app.name: plane-plane-api
+        app.kubernetes.io/name: plane-api
+    spec:
+      # OPS-767: uid=1001 tested via oc debug: gunicorn reached "Application startup complete."
+      # /code is chmod 777 so any UID can write logs and temp files.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+      - name: plane-api
+        # Must match Helm-rendered image to avoid SSA field-ownership conflict.
+        # Update if chart bumps planeVersion (currently v0.24.0 per values.yaml).
+        image: harbor.208.haist.farm/sentinel/plane-backend@sha256:f2d0fddc30a702cd084ee5523766797f2c3ff11f21041980850b3b752a613b28
+        imagePullPolicy: IfNotPresent
+        # OPS-766 Fix A: two gunicorn workers so graceful restarts overlap.
+        # Helm chart does not set env (only envFrom); no SSA conflict.
+        env:
+        - name: GUNICORN_WORKERS
+          value: "2"
+        # OPS-951: HTTP livenessProbe detects wedged pods (e.g. after iSCSI session drop).
+        # Consolidated with readinessProbe here — K8s SSA treats both probes as atomic structs;
+        # a single field-manager must own both. 60s initialDelay allows Django startup.
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # OPS-766 Fix B: readiness probe timeout raised from chart default of 1s.
+        # Full probe spec required — readinessProbe is an atomic struct in K8s SSA;
+        # partial sub-field ownership is not supported.
+        # ignoreDifferences in plane-app.yaml shields timeoutSeconds from Helm re-write.
+        readinessProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /
+            port: 8000
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        # OPS-767: non-root container security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]

@@ -1,0 +1,23 @@
+# OPS-747: NetworkPolicy baseline for the Kubernetes 'default' namespace.
+# default namespace had 1 Completed pod as of 2026-05-18 — zero disruption risk.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: default-netpol
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/default-netpol
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

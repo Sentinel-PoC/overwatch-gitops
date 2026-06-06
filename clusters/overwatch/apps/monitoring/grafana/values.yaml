@@ -1,0 +1,912 @@
+# Grafana Helm values for OKD deployment
+# Managed via GitOps - do not modify in UI
+
+# OPS-1165: backstage catalog annotation for inventory compliance
+annotations:
+  backstage.io/component: grafana
+
+admin:
+  existingSecret: grafana-admin-credentials
+  userKey: admin-user
+  passwordKey: admin-password
+
+# Image overrides — pull from Harbor instead of public registries
+image:
+  registry: harbor.208.haist.farm
+  repository: sentinel/grafana
+  tag: "12.4.3-security-02"
+  pullPolicy: IfNotPresent
+
+# OpenShift-compatible security context
+initChownData:
+  enabled: false
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000780000
+  fsGroup: 1000780000
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000780000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+serviceAccount:
+  create: true
+
+rbac:
+  create: false
+
+persistence:
+  enabled: false
+
+# Sidecar for automatic dashboard discovery from ConfigMaps
+sidecar:
+  image:
+    registry: harbor.208.haist.farm
+    repository: sentinel/k8s-sidecar
+    tag: 2.7.3
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000780000
+    allowPrivilegeEscalation: false
+    privileged: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    folder: /var/lib/grafana/dashboards/default
+    folderAnnotation: grafana_folder
+    searchNamespace: monitoring
+    resource: configmap
+    provider:
+      foldersFromFilesStructure: false
+      disableDelete: false
+
+# Plugins — downloaded from grafana.com at startup; requires outbound internet from cluster
+# OPS-565: opensearch-datasource for Wazuh; infinity for MISP/GreyNoise/AbuseIPDB REST APIs
+plugins:
+  - grafana-opensearch-datasource
+  - yesoreyeram-infinity-datasource
+
+# Datasources - configured via provisioning
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: https://thanos-querier.openshift-monitoring.svc:9091
+        access: proxy
+        isDefault: true
+        jsonData:
+          httpHeaderName1: "Authorization"
+          tlsSkipVerify: true
+          timeInterval: "30s"
+        secureJsonData:
+          httpHeaderValue1: "Bearer $PROMETHEUS_TOKEN"
+      - name: UniFi Prometheus
+        type: prometheus
+        url: http://192.168.12.210:9099
+        access: proxy
+        isDefault: false
+        jsonData:
+          timeInterval: "30s"
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger-tracing
+        url: http://jaeger-query-http.observability.svc.cluster.local:16686
+        access: proxy
+        isDefault: false
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: ''
+          nodeGraph:
+            enabled: true
+        editable: false
+      # OPS-519 — Grafana Tempo datasource (dual-running with Jaeger during migration week)
+      # Tempo monolithic mode: HTTP query API on port 3100, path /api/traces
+      # No authentication — single-tenant lab; Grafana OIDC handles access control.
+      # tracesToLogs links Tempo traces to Loki log lines via traceID.
+      - name: Tempo
+        type: tempo
+        uid: tempo-tracing
+        url: http://tempo.observability.svc.cluster.local:3100
+        access: proxy
+        isDefault: false
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki-logs
+            spanStartTimeShift: '-1m'
+            spanEndTimeShift: '1m'
+            filterByTraceID: true
+            filterBySpanID: false
+          serviceMap:
+            datasourceUid: PBFA97CFB590B2093
+          nodeGraph:
+            enabled: true
+          lokiSearch:
+            datasourceUid: loki-logs
+        editable: false
+      # OPS-391 — Loki log aggregation datasource (unauthenticated; gateway in observability ns)
+      - name: Loki
+        type: loki
+        uid: loki-logs
+        url: http://loki-gateway.observability.svc.cluster.local:80
+        access: proxy
+        isDefault: false
+        jsonData:
+          maxLines: 1000
+        editable: false
+      # OPS-565 — Wazuh OpenSearch datasource (grafana-opensearch-datasource plugin)
+      # URL: wazuh-indexer runs in wazuh ns; requires valid TLS cert or skipVerify
+      - name: Wazuh OpenSearch
+        type: grafana-opensearch-datasource
+        uid: opensearch-wazuh
+        url: https://wazuh-indexer.wazuh.svc.cluster.local:9200
+        access: proxy
+        isDefault: false
+        basicAuth: true
+        basicAuthUser: $GF_DS_OPENSEARCH_WAZUH_USER
+        jsonData:
+          database: wazuh-alerts-4.x-*
+          flavor: opensearch
+          version: "2.10.0"
+          timeField: "@timestamp"
+          tlsSkipVerify: true
+        secureJsonData:
+          basicAuthPassword: $GF_DS_OPENSEARCH_WAZUH_PASSWORD
+        editable: false
+      # OPS-565 — Attacker-profile PostgreSQL (pgvector; deployed by OPS-566)
+      # Credentials managed via ESO; URL updated when OPS-566 completes
+      - name: Attacker Profile DB
+        type: postgres
+        uid: postgres-attacker-profile
+        url: postgres-attacker-profile.monitoring.svc.cluster.local:5432
+        access: proxy
+        isDefault: false
+        user: $GF_DS_POSTGRES_ATTACKER_USER
+        jsonData:
+          database: attacker_intel
+          sslmode: require
+          maxOpenConns: 5
+          maxIdleConns: 2
+          connMaxLifetime: 14400
+          postgresVersion: 1500
+          timescaledb: false
+        secureJsonData:
+          password: $GF_DS_POSTGRES_ATTACKER_PASSWORD
+        editable: false
+      # OPS-565 — MISP threat intelligence (yesoreyeram-infinity-datasource; OPS-571 dependency)
+      - name: MISP
+        type: yesoreyeram-infinity-datasource
+        uid: misp-threat-intel
+        url: http://misp.misp.svc.cluster.local
+        access: proxy
+        isDefault: false
+        jsonData:
+          httpHeaderName1: "Authorization"
+        secureJsonData:
+          httpHeaderValue1: $GF_DS_MISP_API_TOKEN
+        editable: false
+      # OPS-565 — GreyNoise threat intelligence REST API (yesoreyeram-infinity-datasource)
+      - name: GreyNoise
+        type: yesoreyeram-infinity-datasource
+        uid: greynoise-threat-intel
+        url: https://api.greynoise.io
+        access: proxy
+        isDefault: false
+        jsonData:
+          httpHeaderName1: "key"
+        secureJsonData:
+          httpHeaderValue1: $GF_DS_GREYNOISE_API_KEY
+        editable: false
+      # OPS-565 — AbuseIPDB threat intelligence REST API (yesoreyeram-infinity-datasource)
+      - name: AbuseIPDB
+        type: yesoreyeram-infinity-datasource
+        uid: abuseipdb-threat-intel
+        url: https://api.abuseipdb.com/api/v2
+        access: proxy
+        isDefault: false
+        jsonData:
+          httpHeaderName1: "Key"
+        secureJsonData:
+          httpHeaderValue1: $GF_DS_ABUSEIPDB_API_KEY
+        editable: false
+      # OPS-565 — Loki read-only (basic-auth; ro_user for future Loki gateway auth enablement)
+      - name: Loki (RO Auth)
+        type: loki
+        uid: loki-logs-ro
+        url: http://loki-gateway.observability.svc.cluster.local:80
+        access: proxy
+        isDefault: false
+        basicAuth: true
+        basicAuthUser: $GF_DS_LOKI_RO_USER
+        jsonData:
+          maxLines: 1000
+        secureJsonData:
+          basicAuthPassword: $GF_DS_LOKI_RO_PASSWORD
+        editable: false
+      # OPS-565 — Prometheus read-only (basic-auth; placeholder for attacker-profile Prometheus)
+      # Update URL when dedicated Prometheus endpoint is deployed
+      - name: Prometheus (RO)
+        type: prometheus
+        uid: prometheus-ro-creds
+        url: http://prometheus-operated.monitoring.svc.cluster.local:9090
+        access: proxy
+        isDefault: false
+        basicAuth: true
+        basicAuthUser: $GF_DS_PROMETHEUS_RO_USER
+        jsonData:
+          timeInterval: "30s"
+        secureJsonData:
+          basicAuthPassword: $GF_DS_PROMETHEUS_RO_PASSWORD
+        editable: false
+
+# Environment variables from secrets
+envFromSecrets:
+  - name: grafana-prometheus-token
+    optional: false
+  # OPS-605 Phase 4: Authentik OIDC credentials via raw ExternalSecret (apps/monitoring/grafana-oidc-secret.yaml)
+  # Provides GF_AUTH_GENERIC_OAUTH_CLIENT_ID + GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET from Vault authentik/clients/grafana
+  # Listed first so its values win on key conflict with any legacy secret below.
+  - name: grafana-oidc-secret
+    optional: false
+  # Legacy Keycloak OIDC secret — demoted to optional: true after Authentik cutover; retained for rollback
+  - name: grafana-keycloak-secret
+    optional: true
+  # OPS-605 Phase 3 legacy: provides GF_AUTH_GENERIC_OAUTH_AUTHENTIK_* (wrong names, ignored); optional: true
+  - name: grafana-authentik-secret
+    optional: true
+  # OPS-565 datasource credential secrets (ESO-managed via Vault)
+  - name: grafana-ds-opensearch-wazuh
+    optional: false
+  - name: grafana-ds-postgres-attacker-profile
+    optional: false
+  - name: grafana-ds-misp
+    optional: false
+  - name: grafana-ds-greynoise
+    optional: false
+  - name: grafana-ds-abuseipdb
+    optional: false
+  - name: grafana-ds-loki-ro
+    optional: false
+  - name: grafana-ds-prometheus-ro
+    optional: false
+
+# Grafana.ini configuration
+grafana.ini:
+  server:
+    root_url: https://grafana.208.haist.farm
+  security:
+    allow_embedding: false
+  auth.anonymous:
+    enabled: false
+  auth:
+    # OPS-565/OPS-605: disable local login; all auth via Authentik OIDC (cutover complete Phase 4)
+    disable_login_form: true
+  auth.basic:
+    # OPS-565: disable HTTP basic auth (no local accounts)
+    enabled: false
+  auth.generic_oauth:
+    enabled: true
+    name: Authentik
+    client_id: ${GF_AUTH_GENERIC_OAUTH_CLIENT_ID}
+    client_secret: ${GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET}
+    scopes: openid profile email groups
+    auth_url: https://auth-next.208.haist.farm/application/o/authorize/
+    token_url: https://auth-next.208.haist.farm/application/o/token/
+    api_url: https://auth-next.208.haist.farm/application/o/userinfo/
+    # OPS-565/OPS-605: role mapping via Authentik groups (grafana-admin → Admin, grafana-editor → Editor)
+    role_attribute_path: "contains(groups[*], 'grafana-admin') && 'Admin' || contains(groups[*], 'grafana-editor') && 'Editor' || 'Viewer'"
+    allow_sign_up: true
+    tls_skip_verify_insecure: false
+  # OPS-641/OPS-640: auth.generic_oauth.authentik named subsection was dead config — Grafana 12.4.3
+  # silently ignores named subsections (AllOAuthProviders is a fixed list; named variants don't exist).
+  # Removed in PR #180. OPS-605 Phase 4 complete: auth.generic_oauth now targets Authentik only.
+  # grafana-authentik-secret ESO (optional: true) retained pending OPS-605 Phase 4 closeout cleanup.
+  users:
+    allow_sign_up: false
+  unified_alerting:
+    enabled: true
+
+# Alert contact points, notification policies, and rules
+alerting:
+  contactpoints.yaml:
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: iac-control-webhook
+        receivers:
+          - uid: iac-webhook-1
+            type: webhook
+            settings:
+              url: "http://192.168.12.210:9095/grafana"
+              httpMethod: POST
+            disableResolveMessage: false
+
+  notification-policies.yaml:
+    apiVersion: 1
+    policies:
+      - orgId: 1
+        receiver: iac-control-webhook
+        group_by:
+          - grafana_folder
+          - alertname
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+
+  rules.yaml:
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: Sentinel Infrastructure
+        folder: Infrastructure Alerts
+        interval: 60s
+        rules:
+          - uid: high-node-cpu
+            title: High Node CPU Usage
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: A
+              - refId: B
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - B
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: A
+                  reducer: last
+                  refId: B
+                  type: reduce
+              - refId: C
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 85
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: B
+                  refId: C
+                  type: threshold
+            for: 5m
+            annotations:
+              summary: "CPU usage above 85% - check Grafana for details"
+            labels:
+              severity: warning
+
+          - uid: high-node-memory
+            title: High Node Memory Usage
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: A
+              - refId: B
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - B
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: A
+                  reducer: last
+                  refId: B
+                  type: reduce
+              - refId: C
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 90
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: B
+                  refId: C
+                  type: threshold
+            for: 5m
+            annotations:
+              summary: "Memory usage above 90% - check Grafana for details"
+            labels:
+              severity: warning
+
+          - uid: wazuh-critical-cves
+            title: Wazuh Critical CVEs Detected
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: P660CC246A1C19F5F
+                model:
+                  expr: wazuh_vulnerabilities_total{severity="Critical"}
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: A
+              - refId: B
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - B
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: A
+                  reducer: last
+                  refId: B
+                  type: reduce
+              - refId: C
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: B
+                  refId: C
+                  type: threshold
+            for: 5m
+            annotations:
+              summary: "Critical CVEs detected by Wazuh vulnerability scanner"
+              description: "Wazuh has detected critical severity vulnerabilities across monitored hosts. Review the Wazuh Vulnerabilities dashboard for details."
+            labels:
+              severity: critical
+
+          - uid: wazuh-exporter-down
+            title: Wazuh Vulnerability Exporter Down
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 900
+                  to: 0
+                datasourceUid: P660CC246A1C19F5F
+                model:
+                  expr: time() - wazuh_vuln_exporter_last_scrape_timestamp
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: A
+              - refId: B
+                relativeTimeRange:
+                  from: 900
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - B
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: A
+                  reducer: last
+                  refId: B
+                  type: reduce
+              - refId: C
+                relativeTimeRange:
+                  from: 900
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 900
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: B
+                  refId: C
+                  type: threshold
+            for: 10m
+            annotations:
+              summary: "Wazuh vulnerability exporter has not reported in 15+ minutes"
+            labels:
+              severity: warning
+
+          - uid: pod-crash-loop
+            title: Pod CrashLoopBackOff
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: PBFA97CFB590B2093
+                model:
+                  expr: increase(kube_pod_container_status_restarts_total[1h]) > 3
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: A
+              - refId: B
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - B
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: A
+                  reducer: last
+                  refId: B
+                  type: reduce
+              - refId: C
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  expression: B
+                  refId: C
+                  type: threshold
+            for: 10m
+            annotations:
+              summary: "Pod crash-loop detected - check Grafana for details"
+            labels:
+              severity: critical
+
+# Readiness probe
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: grafana
+  timeoutSeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+# Resource requests and limits
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ExternalSecrets deployed alongside Helm release (monitoring namespace)
+# OPS-565: added 7 datasource credential secrets; OPS-605 Phase 4: Keycloak OIDC → Authentik complete
+extraObjects:
+  # Admin credentials (pre-existing)
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-admin-credentials
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-admin-credentials
+        creationPolicy: Owner
+      data:
+        - secretKey: admin-user
+          remoteRef:
+            key: grafana
+            property: admin_user
+        - secretKey: admin-password
+          remoteRef:
+            key: grafana
+            property: admin_password
+
+  # OPS-605 Phase 4: Authentik OIDC client credentials for Grafana auth.generic_oauth
+  # Vault path: secret/authentik/clients/grafana (client_id + client_secret)
+  # Env var names match Grafana's auth.generic_oauth.{client_id,client_secret} INI template.
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-authentik-secret
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-authentik-secret
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_AUTH_GENERIC_OAUTH_CLIENT_ID
+          remoteRef:
+            key: authentik/clients/grafana
+            property: client_id
+        - secretKey: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
+          remoteRef:
+            key: authentik/clients/grafana
+            property: client_secret
+
+  # OPS-565: Wazuh OpenSearch read-only credentials
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-opensearch-wazuh
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-opensearch-wazuh
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_OPENSEARCH_WAZUH_USER
+          remoteRef:
+            key: grafana/datasources/opensearch-wazuh
+            property: ro_user
+        - secretKey: GF_DS_OPENSEARCH_WAZUH_PASSWORD
+          remoteRef:
+            key: grafana/datasources/opensearch-wazuh
+            property: ro_password
+
+  # OPS-565: Attacker-profile PostgreSQL read-only credentials (OPS-566 dependency)
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-postgres-attacker-profile
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-postgres-attacker-profile
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_POSTGRES_ATTACKER_USER
+          remoteRef:
+            key: grafana/datasources/postgres-attacker-profile
+            property: ro_user
+        - secretKey: GF_DS_POSTGRES_ATTACKER_PASSWORD
+          remoteRef:
+            key: grafana/datasources/postgres-attacker-profile
+            property: ro_password
+
+  # OPS-565: MISP API token (OPS-571 dependency for live datasource health)
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-misp
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-misp
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_MISP_API_TOKEN
+          remoteRef:
+            key: grafana/datasources/misp
+            property: api_token
+
+  # OPS-565: GreyNoise API key
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-greynoise
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-greynoise
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_GREYNOISE_API_KEY
+          remoteRef:
+            key: grafana/datasources/greynoise
+            property: api_key
+
+  # OPS-565: AbuseIPDB API key
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-abuseipdb
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-abuseipdb
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_ABUSEIPDB_API_KEY
+          remoteRef:
+            key: grafana/datasources/abuseipdb
+            property: api_key
+
+  # OPS-565: Loki read-only credentials (for Loki gateway basic-auth enablement)
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-loki-ro
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-loki-ro
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_LOKI_RO_USER
+          remoteRef:
+            key: grafana/datasources/loki
+            property: ro_user
+        - secretKey: GF_DS_LOKI_RO_PASSWORD
+          remoteRef:
+            key: grafana/datasources/loki
+            property: ro_password
+
+  # OPS-565: Prometheus read-only credentials (placeholder; URL updated per future deployment)
+  - apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: grafana-ds-prometheus-ro
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        kind: ClusterSecretStore
+        name: vault-backend
+      target:
+        name: grafana-ds-prometheus-ro
+        creationPolicy: Owner
+      data:
+        - secretKey: GF_DS_PROMETHEUS_RO_USER
+          remoteRef:
+            key: grafana/datasources/prometheus
+            property: ro_user
+        - secretKey: GF_DS_PROMETHEUS_RO_PASSWORD
+          remoteRef:
+            key: grafana/datasources/prometheus
+            property: ro_password

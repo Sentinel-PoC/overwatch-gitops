@@ -1,0 +1,77 @@
+---
+name: Lint and Validate
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  yamllint:
+    runs-on: iac
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run yamllint
+        run: |
+          echo "Running yamllint on all YAML files..."
+          yamllint -c .yamllint.yml -f parsable .
+
+  trivy-config:
+    runs-on: iac
+    steps:
+      - name: Skip scan on docs/workflow-only PR  # [OPS-742]
+        id: skip_scan
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          FILES=$(curl -sk -H "Authorization: token ${GITHUB_TOKEN}" \
+            "https://forgejo.208.haist.farm/api/v1/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?limit=300" \
+            | jq -r '.[].filename // empty' 2>/dev/null || echo "")
+          if [ -z "$FILES" ]; then echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          SCANNABLE=$(echo "$FILES" | grep -cvE '(\.md$|^AGENT-STATE\.md$|^docs/|^techdocs/|^mkdocs\.yml$|^catalog-info\.yaml$|^\.forgejo/workflows/|^\.gitea/workflows/)' 2>/dev/null || echo "1")
+          if [ "${SCANNABLE:-1}" -eq "0" ]; then
+            echo "Docs/workflow-only PR — skipping trivy-config scan (no K8s manifests to check)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.skip_scan.outputs.skip != 'true'
+      - name: Trivy K8s manifest scan
+        if: steps.skip_scan.outputs.skip != 'true'
+        run: |
+          echo "Running Trivy K8s manifest scan..."
+          trivy fs --scanners misconfig --severity HIGH,CRITICAL .
+
+  # [OPS-246] Checkov K8s job removed 2026-04-19. Trivy (trivy-config above) is the
+  # authoritative K8s misconfig scanner. Checkov K8s produced 302 findings in DefectDojo
+  # that were semantically identical to Trivy K8s results (seccomp, UID/GID, privilege
+  # escalation, capabilities) — different titles, same checks, 100% coverage overlap.
+
+  gitleaks:
+    runs-on: iac
+    steps:
+      - name: Skip scan on docs-only PR  # [OPS-742]
+        id: skip_scan
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          FILES=$(curl -sk -H "Authorization: token ${GITHUB_TOKEN}" \
+            "https://forgejo.208.haist.farm/api/v1/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?limit=300" \
+            | jq -r '.[].filename // empty' 2>/dev/null || echo "")
+          if [ -z "$FILES" ]; then echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          SCANNABLE=$(echo "$FILES" | grep -cvE '(\.md$|^AGENT-STATE\.md$|^docs/|^techdocs/|^mkdocs\.yml$|^catalog-info\.yaml$)' 2>/dev/null || echo "1")
+          if [ "${SCANNABLE:-1}" -eq "0" ]; then
+            echo "Docs-only PR — skipping gitleaks scan"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.skip_scan.outputs.skip != 'true'
+      - name: Gitleaks secret detection
+        if: steps.skip_scan.outputs.skip != 'true'
+        run: |
+          gitleaks detect --source . --report-format json --report-path gitleaks-report.json --no-git
+          echo "No secrets detected."

@@ -1,0 +1,59 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-backstage-annotations
+  annotations:
+    policies.kyverno.io/title: Require Backstage Component Annotation
+    policies.kyverno.io/category: Software Catalog
+    policies.kyverno.io/severity: medium
+    nist-controls: CM-8
+    policies.kyverno.io/description: >-
+      All Deployments, StatefulSets, and DaemonSets must carry the
+      backstage.io/component annotation linking them to a registered
+      Backstage catalog component. Phase 1 (Audit): violations are
+      recorded but not blocked, enabling inventory gap analysis before
+      enforcement (OPS-233). Phase 3 (OPS-227 child F) will flip to
+      Enforce after the violation sweep clears.
+spec:
+  # OPS-1182 (2026-06-05) Phase 2: flipped Audit->Enforce. The 4 chart namespaces
+  # (harbor, nfs-provisioner, pangolin-internal, plane) whose charts cannot set workload
+  # annotations are covered by the add-backstage-component mutate (value=namespace, a real
+  # catalog component); the other in-scope namespaces carry the annotation in their manifests.
+  # All 14 prior violators backfilled + verified live before this flip.
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-backstage-component-annotation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+              namespaces:
+                - backstage
+                - defectdojo
+                - demo
+                - harbor
+                - haists-website
+                - homepage
+                - keycloak
+                - matrix
+                - media
+                - monitoring
+                - netbox
+                - nfs-provisioner
+                - overwatch-console
+                - pangolin-internal
+                - plane
+                - sentinel-ops
+      validate:
+        message: >-
+          The annotation 'backstage.io/component' is required on all
+          Deployments, StatefulSets, and DaemonSets. Add it to link
+          this workload to its Backstage catalog entry (OPS-233).
+        pattern:
+          metadata:
+            annotations:
+              backstage.io/component: "?*"

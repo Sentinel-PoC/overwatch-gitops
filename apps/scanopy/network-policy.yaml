@@ -1,0 +1,135 @@
+---
+# SEC-114: NetworkPolicies for the scanopy namespace.
+# Adds default-deny-all + targeted allow rules for server↔postgres and
+# OKD router→server. The Route (scanopy.208.haist.farm) is left unchanged —
+# whether scanopy should be internet-exposed is an operator decision (flagged
+# to team-lead separately per task instructions).
+#
+# The scanopy-daemon deployment (replicas:0) uses hostNetwork:true. For
+# hostNetwork pods, NP applies for their declared container ports but
+# raw-socket network scanning at the node level is unaffected by NP.
+# When OPS-1123 moves the daemon out-of-cluster, these NPs should be reviewed.
+
+# 1. Default deny: block all ingress+egress to every pod in the namespace.
+#    Named allow rules below carve out the necessary exceptions.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: scanopy
+  annotations:
+    kubernetes.io/description: "SEC-114: deny all traffic; allow rules below carve out exceptions"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2. Allow OKD router → scanopy-server port 60072.
+#    The openshift-ingress namespace carries label network.openshift.io/policy-group=ingress
+#    on all OKD clusters (standard operator-assigned label).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-server-ingress-from-router
+  namespace: scanopy
+  annotations:
+    kubernetes.io/description: "SEC-114: OKD router → scanopy-server:60072"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scanopy
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 60072
+          protocol: TCP
+---
+# 3. Allow scanopy-server → scanopy-postgresql port 5432.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-server-egress-to-postgres
+  namespace: scanopy
+  annotations:
+    kubernetes.io/description: "SEC-114: scanopy-server → postgres:5432"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scanopy
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+              app.kubernetes.io/component: database
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# 4. Allow ingress to scanopy-postgresql from scanopy-server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-ingress-from-server
+  namespace: scanopy
+  annotations:
+    kubernetes.io/description: "SEC-114: scanopy-server → postgres:5432 (ingress side)"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: scanopy
+              app.kubernetes.io/component: server
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# 5. Allow DNS egress from all pods in the namespace.
+#    OpenShift OVN-Kubernetes DNS fix (SEC-122 breakage diagnosed 2026-06-04):
+#    openshift-dns CoreDNS pods listen on port 5353 (not 53). The ClusterIP
+#    service (172.30.0.10:53) DNATs to DNS pod:5353. Under a default-deny-all NP,
+#    OVN-K conntrack only tracks the return path when the egress rule explicitly
+#    covers BOTH port 53 (ClusterIP) AND port 5353 (pod backend) with a
+#    namespaceSelector restricting to in-cluster pods. Without port 5353, DNS
+#    responses are blocked by the default-deny-all ingress rule.
+#    Reference pattern: oc get netpol allow-dns -n demo -o yaml (platform standard)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: scanopy
+  annotations:
+    kubernetes.io/description: "SEC-114+SEC-122: allow DNS lookups for all pods (port 53 + 5353 for OVN-K DNAT)"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP

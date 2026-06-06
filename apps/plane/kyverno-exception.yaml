@@ -1,0 +1,44 @@
+---
+# OPS-1182 (2026-06-05): RE-ESTABLISHED (was tombstoned by OPS-126).
+#
+# This PolicyException is load-bearing and was live the whole time — tracked to the
+# plane ArgoCD app but kept alive only by the app's `prune: false` after OPS-126
+# removed it from git. require-resource-limits is ALREADY Enforce and depends on it.
+# Re-tracking it in git removes that fragility AND lets require-labels flip to Enforce.
+#
+# Why plane chart workloads genuinely need an exception (not a label fix):
+# the plane-ce 1.4.1 chart renders StatefulSets/Deployments whose immutable
+# spec.selector.matchLabels.app.name drifts from git (default-plane-* vs plane-plane-*).
+# Because pod-template labels must match the immutable selector, app.kubernetes.io/name
+# cannot be added to admin/space/web/STS templates without recreating the workloads
+# (see ignoreDifferences rationale in clusters/overwatch/apps/plane-app.yaml). The
+# exception is the sanctioned mechanism for this chart-selector reality.
+#
+# Job added (OPS-1182): plane-ce install/upgrade Jobs (plane-api-migrate,
+# plane-minio-bucket) are chart-generated and unlabeled; exempt so a future chart
+# upgrade isn't blocked under require-labels Enforce.
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: plane-chart-hygiene-exception
+  namespace: kyverno
+spec:
+  exceptions:
+  - policyName: require-labels
+    ruleNames:
+    - require-app-label
+    - autogen-require-app-label
+  - policyName: require-resource-limits
+    ruleNames:
+    - require-limits
+    - autogen-require-limits
+  match:
+    any:
+    - resources:
+        kinds:
+        - Pod
+        - StatefulSet
+        - Deployment
+        - Job
+        namespaces:
+        - plane

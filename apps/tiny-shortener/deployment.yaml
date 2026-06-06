@@ -1,0 +1,114 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tiny-shortener
+  namespace: tiny-shortener
+  labels:
+    app.kubernetes.io/name: tiny-shortener
+    app.kubernetes.io/instance: tiny-shortener
+    app.kubernetes.io/component: shortener
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # single SQLite writer on RWO/NFS — never two pods at once
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tiny-shortener
+      app.kubernetes.io/instance: tiny-shortener
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tiny-shortener
+        app.kubernetes.io/instance: tiny-shortener
+        app.kubernetes.io/component: shortener
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: tiny-shortener
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      securityContext:
+        fsGroup: 1001
+      containers:
+        - name: tiny-shortener
+          image: harbor.208.haist.farm/sentinel/tiny-shortener@sha256:ef352bc96c7214b3133d2d2987538d706cc5ca859413ccebdb61a040dba4d945
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DB_PATH
+              value: /data/urls.db
+            - name: BASE_URL
+              value: https://tiny.haist.farm
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: tiny-shortener-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tiny-shortener-data
+  namespace: tiny-shortener
+  labels:
+    app.kubernetes.io/name: tiny-shortener
+    app.kubernetes.io/instance: tiny-shortener
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: nfs-storage
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tiny-shortener
+  namespace: tiny-shortener
+  labels:
+    app.kubernetes.io/name: tiny-shortener
+    app.kubernetes.io/instance: tiny-shortener
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: tiny-shortener
+    app.kubernetes.io/instance: tiny-shortener

@@ -1,0 +1,73 @@
+# OPS-983: Add dedicated overwatch-console local account to ArgoCD CR.
+#
+# CONTEXT
+# ───────
+# The overwatch-console was using the admin:apiKey token from secret/mcp
+# to call ArgoCD /api/v1/applications. That token expired 2026-05-15 after
+# its 90-day TTL. Immediate fix: regenerated admin token with expiresIn=0
+# and stored in Vault (both secret/mcp and secret/overwatch-console).
+#
+# STRUCTURAL FIX (this file)
+# ──────────────────────────
+# Adds a dedicated `overwatch-console` ArgoCD local account with apiKey
+# capability, bound to role:viewer (applications:get only). Removes the
+# console's dependency on the admin account token.
+#
+# SCOPE
+# ─────
+# The ArgoCD CR (openshift-gitops) is managed by the openshift-gitops
+# operator, not by an ArgoCD Application (bootstrapping problem).
+# This file is NOT applied automatically. Apply manually after PR merge:
+#
+#   oc patch argocd openshift-gitops -n openshift-gitops \
+#     --type=merge -p "$(cat apps/argocd/argocd-cr-console-account-patch.yaml | \
+#     python3 -c \"import sys,yaml,json; d=yaml.safe_load(sys.stdin); print(json.dumps(d['patch']))\")"
+#
+# Or apply the patch directly:
+#
+#   oc patch argocd openshift-gitops -n openshift-gitops --type=merge -p '{
+#     "spec": {
+#       "extraConfig": {
+#         "accounts.overwatch-console": "apiKey",
+#         "accounts.overwatch-console.enabled": "true"
+#       },
+#       "rbac": {
+#         "policy": "g, admin, role:admin\np, role:operator, applications, *, */*, allow\np, role:operator, logs, get, */*, allow\ng, operator, role:operator\np, role:viewer, applications, get, */*, allow\ng, viewer, role:viewer\np, backstage, applications, get, */*, allow\np, backstage, projects, get, *, allow\np, backstage, clusters, get, *, allow\np, overwatch-console, applications, get, */*, allow"
+#       }
+#     }
+#   }'
+#
+# AFTER APPLYING THE PATCH
+# ────────────────────────
+# 1. Verify the account was created:
+#      argocd account list   (or: oc get cm argocd-cm -n openshift-gitops -o yaml | grep overwatch-console)
+# 2. Generate a new API token for the overwatch-console account:
+#      argocd account generate-token --account overwatch-console --expires-in 0
+# 3. Store the new token in Vault:
+#      vault kv patch secret/overwatch-console argocd_api_token=<NEW_TOKEN>
+# 4. Apply the updated ExternalSecret (also changes remoteRef path):
+#      oc apply -n overwatch-console -f apps/overwatch-console/external-secret.yaml
+# 5. Annotate ESO to force-refresh:
+#      oc annotate externalsecret overwatch-console-credentials \
+#        -n overwatch-console force-sync=$(date +%s) --overwrite
+# 6. Reloader will auto-restart the console pod on secret change.
+#
+# TOKEN ROTATION NOTE
+# ───────────────────
+# The expiresIn=0 (no expiry) was chosen to avoid recurrence of OPS-983.
+# If the security policy requires periodic rotation, consider:
+#   - A Vault dynamic secret / lease-based rotation
+#   - A CronJob that regenerates the token on a schedule
+# Track in a follow-up issue (OPS-NNN).
+#
+# Tracking: OPS-983
+
+# This YAML is documentation only — it is not applied by kubectl directly.
+# The patch content is embedded in the comments above.
+# Keeping it here for gitops audit trail per CLAUDE.md §6.
+metadata:
+  name: argocd-cr-console-account-patch
+  annotations:
+    ops.overwatch/issue: OPS-983
+    ops.overwatch/apply-manually: "true"
+    ops.overwatch/reason: "bootstrapping — ArgoCD cannot manage its own CR"

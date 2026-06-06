@@ -1,0 +1,22 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: openshift-console
+  description: OKD web console — supplemental Route exposing the OpenShift console at console.208.haist.farm
+  annotations:
+    backstage.io/kubernetes-namespace: openshift-console
+  links:
+    - url: https://console.208.haist.farm
+      title: OKD Web Console
+      icon: dashboard
+  tags:
+    - platform
+    - console
+    - openshift
+    - overwatch
+spec:
+  type: website
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

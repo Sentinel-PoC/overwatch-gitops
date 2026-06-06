@@ -1,0 +1,17 @@
+---
+# Harbor has 9 interconnected microservices (nginx, core, registry, jobservice,
+# portal, trivy, exporter, redis, database). With STRICT mTLS mesh-wide, each
+# service's sidecar rejects plaintext from other harbor services because the
+# application containers connect directly (bypassing their own sidecars).
+#
+# Set namespace-wide PERMISSIVE to allow both mTLS and plaintext within harbor.
+# External traffic still goes through OKD Router (TLS) → harbor-nginx → mesh.
+# Database remains unmeshed (inject: false).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: harbor-permissive
+  namespace: harbor
+spec:
+  mtls:
+    mode: PERMISSIVE

@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Sandbox etcd-backup deployment (OPS-278).
+#
+# NAMESPACE STRATEGY: Uses namespace-transformer.yaml (unsetOnly: true) so
+# only resources without an explicit namespace receive sentinel-ops-sandbox. Preserves
+# the cross-namespace RoleBinding etcd-backup-etcd-reader in openshift-etcd.
+# Same pattern as prod sentinel-ops (OPS-249).
+#
+# SCRIPT CONFIGMAP (option 2 — no prod-tree touch):
+# References prod's etcd-backup-scripts.yaml via relative path. This reuses the
+# parameterized ConfigMap from OPS-291 without duplication. ArgoCD repo-server
+# forbids out-of-bounds symlinks; relative file resources within the repo are fine.
+#
+# STATIC SECRETS (out-of-band — see secrets.README.md):
+# etcd-backup-vault-creds — VAULT_TOKEN (workload token from Vault)
+# ops-minio-sandbox-creds — MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT
+# These are NEVER committed to git. Apply out-of-band before first sync.
+transformers:
+  - namespace-transformer.yaml
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - etcd-backup-rbac.yaml
+  - ../sentinel-ops/configmaps/etcd-backup-scripts.yaml
+  - cronjobs/etcd-backup.yaml
+  - network-policies.yaml

@@ -1,0 +1,46 @@
+---
+# OPS-398: Scanopy daemon requires hostNetwork + privileged access for raw network
+# scanning (ARP, LLDP, SNMP, ICMP). Pattern mirrors apps/falco/scc.yaml with
+# allowHostNetwork:true added (Falco does not scan the network so it omits it).
+# OKD SCC admission ignores RBAC — SA must be listed in users[] directly.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: scanopy-daemon-privileged
+  annotations:
+    kubernetes.io/description: >-
+      Privileged SCC for Scanopy daemon. Requires host networking and
+      privileged execution for ARP/LLDP/SNMP/ICMP active network scanning.
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: true
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: true
+allowedCapabilities:
+  - NET_RAW
+  - NET_ADMIN
+defaultAddCapabilities: null
+requiredDropCapabilities: null
+fsGroup:
+  type: RunAsAny
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - '*'
+readOnlyRootFilesystem: false
+priority: null
+users:
+  - system:serviceaccount:scanopy:scanopy-daemon
+groups: []
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret

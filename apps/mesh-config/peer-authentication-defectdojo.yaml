@@ -1,0 +1,18 @@
+---
+# DefectDojo valkey has a sidecar with STRICT mTLS.
+# PostgreSQL is unmeshed (inject: false). Allow PERMISSIVE on valkey port 6379
+# as a safety margin for any unmeshed components connecting to valkey.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: defectdojo-valkey-permissive
+  namespace: defectdojo
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    6379:
+      mode: PERMISSIVE

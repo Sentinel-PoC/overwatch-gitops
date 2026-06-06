@@ -1,0 +1,24 @@
+---
+# Loki gateway route — loki.208.haist.farm
+# Routes to the Loki gateway Service (nginx-based read/write router)
+# TLS termination at OKD edge (Pangolin front-proxies *.208.haist.farm)
+# Auth: Loki is a data API accessed via Grafana (which handles Keycloak auth)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: loki
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: gateway
+spec:
+  host: loki.208.haist.farm
+  to:
+    kind: Service
+    name: loki-gateway
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

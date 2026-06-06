@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ntfy-config
+  namespace: health-monitoring
+  labels:
+    app.kubernetes.io/name: ntfy
+data:
+  server.yml: |
+    base-url: "https://ntfy.208.haist.farm"
+    listen-http: ":8080"
+    cache-file: "/var/cache/ntfy/cache.db"
+    cache-duration: "24h"
+    attachment-cache-dir: "/var/cache/ntfy/attachments"
+    attachment-total-size-limit: "100M"
+    attachment-file-size-limit: "5M"
+    behind-proxy: true
+    keepalive-interval: "45s"

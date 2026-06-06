@@ -1,0 +1,288 @@
+# NetBox Helm values for OKD deployment
+# Chart: netbox-community/netbox v7.4.8
+# OKD: All security contexts DISABLED — let OpenShift manage UID/GID via anyuid SCC
+
+# -- Allow non-Bitnami images in bundled subcharts (Valkey)
+# Bitnami charts reject non-standard images by default. Our Harbor-mirrored
+# image is identical content, just re-tagged for supply chain security.
+global:
+  security:
+    allowInsecureImages: true
+
+# OPS-1165: backstage catalog annotation for inventory compliance
+commonAnnotations:
+  backstage.io/component: netbox
+
+# -- Image overrides: pull from Harbor instead of public registries
+# OPS-692: switched from sentinel/netbox:v4.5.3 to sentinel/netbox-with-acls:v4.5.3-acls2.0.0
+# Custom image adds netbox-acls==2.0.0 plugin. Built by .forgejo/workflows/build-netbox-acls.yml.
+# OPS-865: bumped v4.5.3-acls2.0.0 -> v4.6.1-acls2.0.1 (CVE-2026-29514 ExportTemplate RCE)
+# !! MIGRATION REQUIRED: 4.5->4.6 runs Django DB migrations on first deploy.
+# !! Take a DB backup and operator-time this merge.
+# Image is built by build-netbox-acls.yml CI on merge of this PR. Plugin bumped 2.0.0->2.0.1 for NetBox 4.6.x compat.
+image:
+  registry: harbor.208.haist.farm
+  repository: sentinel/netbox-with-acls
+  tag: v4.6.1-acls2.0.1
+  pullPolicy: IfNotPresent
+
+# -- Use pre-created ServiceAccount with anyuid SCC
+serviceAccount:
+  create: false
+  name: netbox
+
+# -- NetBox superuser configuration (keys: password, api_token in secret)
+superuser:
+  name: admin
+  email: admin@haist.farm
+  existingSecret: netbox-credentials
+
+# -- Django SECRET_KEY from ESO-managed secret
+existingSecret: netbox-credentials
+existingSecretKey: secret_key
+
+# -- Disable Ingress (using OKD Route instead)
+ingress:
+  enabled: false
+
+# -- NetBox application settings
+allowedHosts:
+  - netbox.208.haist.farm
+  - localhost
+
+# -- CSRF trusted origins (required for proxy/ingress)
+csrf:
+  trustedOrigins:
+    - "https://netbox.208.haist.farm"
+
+loginRequired: true
+
+# -- Plugins: netbox-acls provides ACL/policy/zone object types (OPS-692)
+# Plugin is pre-installed in the custom image (sentinel/netbox-with-acls:v4.5.3-acls2.0.0).
+# DB migration: netbox-acls adds new tables on first startup (non-destructive, additive only).
+# Verification: GET /api/plugins/acls/access-lists/ → 200 (empty list) confirms plugin active.
+plugins:
+  - netbox_acls
+
+# -- OIDC SSO via Keycloak
+remoteAuth:
+  enabled: true
+  backends:
+    - social_core.backends.open_id_connect.OpenIdConnectAuth
+  autoCreateUser: true
+  autoCreateGroups: true
+  groupSyncEnabled: true
+  superuserGroups:
+    - admin
+  staffGroups:
+    - operator
+
+# -- Mount OIDC secret as additional config (contains client_id/secret)
+extraConfig:
+  - secret:
+      secretName: netbox-oidc
+
+metricsEnabled: true
+
+# -- Persistence for media uploads
+persistence:
+  enabled: true
+  storageClass: nfs-storage
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+# -- DISABLE all security contexts for OKD compatibility
+podSecurityContext:
+  enabled: false
+
+securityContext:
+  enabled: false
+
+init:
+  securityContext:
+    enabled: false
+
+# -- OPS-987: Wait for Valkey before starting the netbox web container.
+# The netbox startup script has a hardcoded 30s DB-wait loop; if Valkey is
+# restarting it hits ConnectionError(104) for the full 30s and exits.
+# This init container polls nc -z until Valkey accepts connections, then exits 0,
+# allowing the main container to start only once Valkey is ready.
+# Uses the same busybox:1.37.0 image as init-dirs (already present in the pod).
+# Kyverno verify-image-signatures only covers harbor.208.haist.farm/sentinel/*,
+# so docker.io/busybox requires no additional signing.
+initContainers:
+  - name: wait-for-valkey
+    image: docker.io/busybox:1.37.0
+    imagePullPolicy: IfNotPresent
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "Waiting for Valkey at netbox-valkey-primary:6379..."
+        until nc -z netbox-valkey-primary 6379; do
+          echo "Valkey not ready, retrying in 5s..."
+          sleep 5
+        done
+        echo "Valkey is ready."
+    resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+
+# -- Resource requests and limits
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# -- Override liveness probe (default checks nginx Unit endpoint, but v4.5 uses granian)
+customLivenessProbe:
+  httpGet:
+    path: /login/
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+# -- Startup probe: allow long startup (migrations, search index build)
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 10
+  failureThreshold: 100
+
+# -- Readiness probe: increase timeout for cold starts
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+# -- Housekeeping CronJob
+housekeeping:
+  enabled: true
+  schedule: "0 4 * * *"
+  podAnnotations:
+    backstage.io/component: netbox
+  podSecurityContext:
+    enabled: false
+  securityContext:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- Worker
+worker:
+  podAnnotations:
+    backstage.io/component: netbox
+  podSecurityContext:
+    enabled: false
+  securityContext:
+    enabled: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  # OPS-987: Wait for Valkey before starting the netbox worker.
+  # Same race as the web pod: worker startup script hits 30s Valkey timeout.
+  initContainers:
+    - name: wait-for-valkey
+      image: docker.io/busybox:1.37.0
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for Valkey at netbox-valkey-primary:6379..."
+          until nc -z netbox-valkey-primary 6379; do
+            echo "Valkey not ready, retrying in 5s..."
+            sleep 5
+          done
+          echo "Valkey is ready."
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+  waitForBackend:
+    enabled: false
+    containerSecurityContext:
+      enabled: false
+
+# -- Enable Istio sidecar injection for mTLS mesh
+podAnnotations:
+  sidecar.istio.io/inject: "true"
+
+# -- PostgreSQL: DISABLED bundled subchart, using raw manifests instead
+# Raw manifests in apps/netbox/postgresql-*.yaml (official postgres:16 image)
+postgresql:
+  enabled: false
+
+# -- External database (points to our raw PostgreSQL deployment)
+externalDatabase:
+  host: netbox-postgresql
+  port: 5432
+  database: netbox
+  username: netbox
+  existingSecretName: netbox-postgresql
+  existingSecretKey: password
+
+# -- Valkey (Redis) subchart (bundled)
+# NOTE: global.security.allowInsecureImages required because Bitnami charts
+# reject non-Bitnami images by default. Our Harbor-mirrored image is identical.
+valkey:
+  enabled: true
+  image:
+    registry: harbor.208.haist.farm
+    repository: sentinel/valkey
+    tag: "9.1.0"
+  commonAnnotations:
+    backstage.io/component: netbox
+  auth:
+    enabled: true
+    existingSecret: netbox-valkey
+    existingSecretPasswordKey: valkey-password
+  master:
+    persistence:
+      enabled: true
+      storageClass: nfs-storage
+      size: 2Gi
+    podSecurityContext:
+      enabled: false
+    containerSecurityContext:
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  replica:
+    replicaCount: 0
+
+# -- Tasks and caching databases (Valkey endpoints)
+tasksDatabase:
+  database: 0
+
+cachingDatabase:
+  database: 1

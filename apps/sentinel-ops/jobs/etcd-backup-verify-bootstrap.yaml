@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: etcd-backup-verify-bootstrap
+  namespace: sentinel-ops
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(1),CM-3(2)"
+    compliance.sentinel/description: >
+      One-shot post-merge verification gate for OPS-183. Polls for a fresh
+      etcd snapshot (within 30 min window), runs etcd-backup-verify.sh, then
+      posts the structured result to OPS-183 Plane issue and transitions it to
+      Done on PASS. On FAIL: posts FAIL comment and exits non-zero. This Job
+      eliminates the need for a follow-up LLM Judge pass on OPS-183 — the
+      deterministic script IS the gate. ttlSecondsAfterFinished cleans up
+      automatically after 10 minutes.
+      Poll budget: POLL_MAX(400) x 60s = 24000s (6h 40min), covers any
+      merge-to-first-tick gap. Verify retry: up to 20x60s = 1200s for
+      replication lag (C4-NEW fix). Total worst case ~25200s.
+      activeDeadlineSeconds 25800 (7h 10min) leaves 600s margin.
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 2
+  activeDeadlineSeconds: 25800
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: etcd-backup-sa
+      restartPolicy: Never
+      containers:
+        - name: verify-bootstrap
+          image: harbor.208.haist.farm/sentinel/sentinel-ops@sha256:6e6e95aab482e99fdd0e4dafcdbabe9914c0ba8371799335052269a225d05fc6
+          command: ["/bin/bash", "/opt/etcd-backup/etcd-backup-verify-bootstrap.sh"]
+          env:
+            - name: VAULT_ADDR
+              value: "https://vault.208.haist.farm"
+            - name: VAULT_K8S_ROLE
+              value: "etcd-backup"
+          envFrom:
+            - secretRef:
+                name: ops-minio-creds
+            - secretRef:
+                name: ops-plane-creds
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/etcd-backup
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: etcd-backup-scripts
+            defaultMode: 0755

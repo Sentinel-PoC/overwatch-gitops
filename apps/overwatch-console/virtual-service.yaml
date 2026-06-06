@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: overwatch-console
+  namespace: overwatch-console
+spec:
+  hosts:
+    - console-sec.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: overwatch-console.overwatch-console.svc.cluster.local
+            port:
+              number: 8080

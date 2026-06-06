@@ -1,0 +1,35 @@
+# OPS-481 Phase 3: ArgoCD Application for matrix-backup (Matrix Synapse PostgreSQL → MinIO).
+# CP-9 / CP-9(1): hourly pg_dump to separate MinIO hardware (.58).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: matrix-backup
+  namespace: openshift-gitops
+  labels:
+    app.kubernetes.io/part-of: matrix-backup
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/matrix-backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: matrix-backup
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

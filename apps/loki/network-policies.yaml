@@ -1,0 +1,151 @@
+# OPS-747: NetworkPolicy default-deny baseline for observability namespace.
+# Deferred from OPS-517 Phase 1b (2026-05-18).
+#
+# Pods in scope (Loki simple-scalable mode, chart 6.30.1):
+#   - loki-read (query frontend + querier)
+#   - loki-write (distributor + ingester)
+#   - loki-backend (compactor + ruler + index-gateway)
+#   - loki-gateway (nginx gateway — receives pushes/queries, port 3100)
+#   - loki-canary (log freshness probe)
+#
+# Traffic requirements:
+#   - Ingress: ALL namespaces → loki-gateway:3100 (promtail DaemonSet across fleet,
+#     Grafana datasource queries). Intentionally broad — log shipping agents run
+#     in every namespace including openshift-*.
+#   - Intra-namespace: read/write/backend/gateway communicate heavily
+#     (ingester→compactor, querier→ingester ring, gateway→read/write)
+#   - Egress: DNS + kube-API (Loki watches ConfigMaps for ruler rules)
+#   - Egress: MinIO at 192.168.12.58:9000 (S3-compatible chunk storage,
+#     bucket loki-chunks — see clusters/overwatch/apps/loki/values.yaml)
+#
+# NIST: SC-7, SC-7(5), AC-4
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow intra-namespace pod communication (bidirectional)
+# Loki simple-scalable components coordinate heavily:
+#   gateway → write (push path), gateway → read (query path)
+#   querier → ingester (ring membership), compactor → index-gateway
+#   All communicate on dynamic gossip/gRPC ports within the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# Allow ingress from all namespaces to Loki gateway (port 3100)
+# Promtail DaemonSet runs across ALL namespaces and pushes logs to loki-gateway:3100.
+# Grafana (and other dashboarding tools) query loki-gateway:3100 for log data.
+# Intentionally broad (namespaceSelector: {}) — restricting by namespace would
+# silently drop logs from any namespace not explicitly listed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-loki-ingress
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: 3100
+          protocol: TCP
+---
+# Allow egress to Kubernetes API server (port 6443)
+# Loki watches ConfigMaps for ruler alert rules and reads Kubernetes metadata
+# for log stream label enrichment. OKD canonical pattern — port 6443 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6443
+          protocol: TCP
+---
+# Allow egress to MinIO (192.168.12.58:9000)
+# Loki uses MinIO as S3-compatible chunk storage (bucket: loki-chunks).
+# All loki-write (ingester), loki-backend (compactor), and loki-read (querier)
+# pods write and read chunk objects from MinIO.
+# See: clusters/overwatch/apps/loki/values.yaml — storage.s3.endpoint
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-egress
+  namespace: observability
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP

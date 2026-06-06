@@ -1,0 +1,123 @@
+# OPS-481 Phase 4: Langfuse PostgreSQL backup CronJob.
+#
+# Design:
+#   Init container: postgres:16.13-alpine3.23 — pg_dump directly to langfuse-postgresql
+#     Service (TCP 5432, no kubectl exec needed).
+#     DB: postgres_langfuse (Langfuse's internal PostgreSQL DB name).
+#     Output: /backup/langfuse-<TIMESTAMP>.dump (custom format = zlib-compressed binary).
+#     NOTE: pg_dump --format=custom already uses zlib compression internally; no
+#     additional gzip pipe is applied (double-compression wastes CPU, grows files).
+#   Main container: mc:latest — uploads dump to MinIO langfuse-backups bucket (.58).
+#     Both containers share an emptyDir volume for the dump file.
+#
+# Credentials: envFrom langfuse-backup-config (ExternalSecret) provides:
+#   PGPASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET
+#
+# Cadence: daily at 03:00 UTC — Langfuse is an observability/tracing platform;
+# daily RPO is appropriate (chat data would warrant hourly, but trace data is
+# more tolerant). Offset from Harbor (02:00) to avoid MinIO I/O contention.
+# Retention: MinIO lifecycle policy set to 30 days on langfuse-backups bucket.
+#
+# COMP-3 controls: CP-9 (system backup), CP-9(1) (separation of primary + backup storage).
+# Primary: TrueNAS .205 (PostgreSQL PVC). Backup: MinIO .58 (different hardware).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: langfuse-backup
+  namespace: langfuse-backup
+  labels:
+    app: langfuse-backup
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(1)"
+    compliance.sentinel/description: >
+      Daily pg_dump of Langfuse PostgreSQL to MinIO .58 (OPS-481 Phase 4).
+      Separate hardware from TrueNAS primary storage (CP-9(1) separation).
+spec:
+  schedule: "0 3 * * *"         # daily at 03:00 UTC (offset from Harbor at 02:00)
+  concurrencyPolicy: Forbid      # never overlap backup runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1h max; dump should complete well within window
+      template:
+        metadata:
+          labels:
+            app: langfuse-backup
+        spec:
+          serviceAccountName: langfuse-backup-sa
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: false  # Alpine images; anyuid SCC bound above
+          imagePullSecrets:
+            - name: harbor-pull-secret
+          initContainers:
+            - name: pg-dump
+              image: harbor.208.haist.farm/sentinel/postgres@sha256:a513e5eb5d31612c5c29565e403ba72861b0da184a8676eb5f2bbc0caae3d8ff
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  DUMPFILE="/backup/langfuse-${TIMESTAMP}.dump"
+                  echo "[pg-dump] Starting pg_dump to ${DUMPFILE}"
+                  pg_dump \
+                    --host=langfuse-postgresql.langfuse.svc.cluster.local \
+                    --port=5432 \
+                    --username=langfuse \
+                    --dbname=postgres_langfuse \
+                    --format=custom \
+                    --file="${DUMPFILE}"
+                  echo "[pg-dump] Dump complete: $(du -sh ${DUMPFILE})"
+                  # Write filename to shared vol so upload container can find it
+                  echo "${DUMPFILE}" > /backup/latest.txt
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: langfuse-backup-config
+                      key: PGPASSWORD
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              volumeMounts:
+                - name: backup-vol
+                  mountPath: /backup
+          containers:
+            - name: upload
+              image: harbor.208.haist.farm/sentinel/mc@sha256:dce495b4f330bf87354c62743e06c3c7d68eedd23f8f94853a441931469cebdb
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  DUMPFILE=$(cat /backup/latest.txt)
+                  echo "[upload] Uploading ${DUMPFILE} to MinIO"
+                  mc alias set target "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+                  mc cp "${DUMPFILE}" "target/${MINIO_BUCKET}/$(basename ${DUMPFILE})"
+                  echo "[upload] Done: s3://${MINIO_BUCKET}/$(basename ${DUMPFILE})"
+                  # Verify upload succeeded
+                  mc ls "target/${MINIO_BUCKET}/$(basename ${DUMPFILE})"
+              envFrom:
+                - secretRef:
+                    name: langfuse-backup-config
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "256Mi"
+              volumeMounts:
+                - name: backup-vol
+                  mountPath: /backup
+          volumes:
+            - name: backup-vol
+              emptyDir:
+                sizeLimit: 2Gi  # Langfuse trace/observability DB; 2Gi ample for daily snapshot

@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: element-config
+  namespace: matrix
+data:
+  nginx.conf: |
+    server {
+      listen 8080;
+      server_name matrix.208.haist.farm;
+      return 301 https://matrix.haist.farm$request_uri;
+    }
+
+    server {
+      listen 8080;
+      server_name matrix.haist.farm _;
+      root /app;
+      index index.html;
+      # Serve Matrix client well-known statically so Element can discover
+      # the homeserver without depending on Synapse's MAS integration.
+      # Synapse's /.well-known/matrix/client handler calls MAS at startup;
+      # when MAS is unavailable it returns 500. This static location bypasses
+      # that dependency. The more-specific Route (/.well-known/matrix/client)
+      # directs these requests here; /.well-known/matrix/server still routes
+      # to Synapse unchanged.
+      location = /.well-known/matrix/client {
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+        return 200 '{"m.homeserver":{"base_url":"https://matrix.haist.farm"}}';
+      }
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+    }
+  config.json: |
+    {
+      "default_server_config": {
+        "m.homeserver": {
+          "base_url": "https://matrix.haist.farm",
+          "server_name": "matrix.haist.farm"
+        }
+      },
+      "disable_guests": true,
+      "integrations_ui_url": "",
+      "integrations_rest_url": "",
+      "integrations_widgets_urls": []
+    }

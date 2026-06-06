@@ -1,0 +1,11 @@
+---
+# STRICT mTLS enabled - traffic routes through Istio IngressGateway
+# which handles mTLS natively, bypassing the OKD ingress router
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: demo
+spec:
+  mtls:
+    mode: STRICT

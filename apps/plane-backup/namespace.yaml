@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plane-backup
+  labels:
+    # Isolated from plane namespace intentionally (OPS-481):
+    # a plane namespace wipe cannot take out backup tooling.
+    app.kubernetes.io/part-of: plane-backup
+    istio-injection: disabled

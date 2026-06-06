@@ -1,0 +1,18 @@
+---
+# OPS-883 / OPS-1107 — CI namespace-bootstrap ClusterRoleBinding
+# Binds ci-namespace-bootstrap SA (openshift-gitops) to ci-namespace-bootstrap ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ci-namespace-bootstrap
+  annotations:
+    ops.haist.farm/issue: "OPS-883/OPS-1107"
+    ops.haist.farm/purpose: "CI apply-namespaces job credential binding"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ci-namespace-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: ci-namespace-bootstrap
+    namespace: openshift-gitops

@@ -1,0 +1,63 @@
+# OPS-481 Phase 4: NetworkPolicies for langfuse-backup namespace.
+# Two egress targets: langfuse-postgresql Service (TCP 5432) + MinIO .58 (TCP 9000).
+# kubectl exec NOT used — pg_dump connects directly via TCP.
+# langfuse namespace has no default-deny today; if one is added later, an ingress
+# allow on langfuse-postgresql from langfuse-backup namespace will be needed.
+---
+# Default deny all — defense in depth for the backup namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: langfuse-backup
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow egress: PostgreSQL (langfuse ns), MinIO (.58), DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-langfuse-backup-egress
+  namespace: langfuse-backup
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: langfuse-backup
+  policyTypes:
+    - Egress
+  egress:
+    # PostgreSQL in langfuse namespace (direct TCP — no kubectl exec)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+      ports:
+        - port: 5432
+          protocol: TCP
+    # MinIO S3 backup destination (.58)
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP
+    # DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP

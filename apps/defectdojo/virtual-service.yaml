@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: defectdojo
+  namespace: defectdojo
+spec:
+  hosts:
+    - defectdojo.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: defectdojo-django.defectdojo.svc.cluster.local
+            port:
+              number: 80

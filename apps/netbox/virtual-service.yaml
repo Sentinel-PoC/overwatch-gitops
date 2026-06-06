@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: netbox
+  namespace: netbox
+spec:
+  hosts:
+    - netbox.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: netbox.netbox.svc.cluster.local
+            port:
+              number: 80

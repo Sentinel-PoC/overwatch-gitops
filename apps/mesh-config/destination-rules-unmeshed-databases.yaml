@@ -1,0 +1,37 @@
+---
+# DestinationRules for unmeshed PostgreSQL databases.
+# These databases have sidecar.istio.io/inject: false, so meshed app pods
+# must disable mTLS when connecting to them. Without this, the app pod's
+# Envoy sidecar tries mTLS but the database has no sidecar to terminate it.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: harbor-database-disable-mtls
+  namespace: harbor
+spec:
+  host: harbor-database.harbor.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: backstage-postgresql-disable-mtls
+  namespace: backstage
+spec:
+  host: backstage-postgresql.backstage.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: defectdojo-postgresql-disable-mtls
+  namespace: defectdojo
+spec:
+  host: defectdojo-postgresql.defectdojo.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE

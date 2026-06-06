@@ -1,0 +1,11 @@
+# Trivy ignore rules for overwatch-gitops K8s manifests
+# These findings are acknowledged but cannot be safely remediated
+# Format: one rule ID per line (comments above for context)
+
+# Newt tunnel: requires root + privilege escalation for WireGuard
+# tun device, network namespace ops, UDP binding. Writable rootfs
+# needed for /tmp/healthy health check.
+# Risk accepted: single-purpose container, network policy restricted.
+KSV012
+KSV014
+KSV106

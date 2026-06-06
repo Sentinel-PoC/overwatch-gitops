@@ -1,0 +1,12 @@
+site_name: ArgoCD Operations
+site_description: Operational runbook for Project Sentinel ArgoCD GitOps
+nav:
+  - Overview: index.md
+  - Architecture: architecture.md
+  - Applications: applications.md
+  - Sync Policies: sync-policies.md
+  - Secrets Management: secrets-management.md
+  - Troubleshooting: troubleshooting.md
+  - Compliance: compliance.md
+plugins:
+  - techdocs-core

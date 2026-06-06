@@ -1,0 +1,752 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-synapse
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /_matrix
+  to:
+    kind: Service
+    name: synapse
+  port:
+    targetPort: 8008
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-synapse-admin
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /_synapse
+  to:
+    kind: Service
+    name: synapse
+  port:
+    targetPort: 8008
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-wellknown
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /.well-known/matrix
+  to:
+    kind: Service
+    name: synapse
+  port:
+    targetPort: 8008
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+# OPS-172: More-specific route for internal host — mirrors matrix-wellknown-client-external
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-wellknown-client
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /.well-known/matrix/client
+  to:
+    kind: Service
+    name: element-web
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-auth
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /auth
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-openid-config
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /.well-known/openid-configuration
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-oauth2
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /oauth2
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-upstream
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /upstream
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-assets
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /assets
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-graphql
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /graphql
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-authorize
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /authorize
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-login
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /login
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-register
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /register
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-reauth
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /reauth
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-consent
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /consent
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-logout
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /logout
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-recover
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /recover
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-verify-email
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /verify-email
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-link
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /link
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-device
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /device
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-account
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  path: /account
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-element
+  namespace: matrix
+spec:
+  host: matrix.208.haist.farm
+  to:
+    kind: Service
+    name: element-web
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-synapse-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /_matrix
+  to:
+    kind: Service
+    name: synapse
+  port:
+    targetPort: 8008
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-synapse-admin-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /_synapse
+  to:
+    kind: Service
+    name: synapse
+  port:
+    targetPort: 8008
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-wellknown-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /.well-known/matrix
+  to:
+    kind: Service
+    name: synapse
+  port:
+    targetPort: 8008
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+# OPS-172: More-specific route for /.well-known/matrix/client so element-web
+# nginx serves it statically. Synapse's handler for this endpoint calls MAS
+# (http://mas:8080) to load OIDC metadata; when MAS is unavailable Synapse
+# returns 500. This route has a longer path prefix than matrix-wellknown-external
+# so OpenShift router selects it first for /client requests only.
+# /.well-known/matrix/server continues to route to Synapse via the existing route.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-wellknown-client-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /.well-known/matrix/client
+  to:
+    kind: Service
+    name: element-web
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-auth-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /auth
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-openid-config-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /.well-known/openid-configuration
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-oauth2-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /oauth2
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-upstream-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /upstream
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-assets-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /assets
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-graphql-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /graphql
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-authorize-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /authorize
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-login-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /login
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-register-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /register
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-reauth-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /reauth
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-consent-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /consent
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-logout-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /logout
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-recover-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /recover
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-verify-email-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /verify-email
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-link-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /link
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-device-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /device
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-mas-account-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  path: /account
+  to:
+    kind: Service
+    name: mas
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: matrix-element-external
+  namespace: matrix
+spec:
+  host: matrix.haist.farm
+  to:
+    kind: Service
+    name: element-web
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

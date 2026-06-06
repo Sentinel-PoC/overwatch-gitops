@@ -1,0 +1,45 @@
+---
+# SEC-122: PolicyException for scanopy-daemon from require-run-as-nonroot.
+#
+# The scanopy-daemon legitimately runs as root. It requires raw packet access
+# for active network discovery (ARP sweeps, LLDP, SNMP, ICMP). Its security
+# posture is governed by the explicit capability set (NET_RAW, NET_ADMIN) set
+# in daemon-deployment.yaml (SEC-112). Requiring runAsNonRoot would block the
+# daemon on scale-up without removing the real security risk — the capabilities
+# are the right control point for a network scanner, not the UID.
+#
+# Scope: scoped to Pods named "scanopy-daemon-*" in the scanopy namespace.
+# PolicyException v2 matches resources by kind/namespace/name — the `containers`
+# field is NOT valid in PolicyException spec (schema error in original #414).
+# The daemon Deployment generates pods named "scanopy-daemon-<hash>-<hash>".
+# The server and postgresql pods (named scanopy-server-* and
+# scanopy-postgresql-*) are NOT matched and ARE enforced by the policy.
+#
+# Placement: kyverno namespace (required by Kyverno PolicyException design).
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: scanopy-daemon-root-exception
+  namespace: kyverno
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: daemon
+  annotations:
+    kubernetes.io/description: >-
+      SEC-122: scanopy-daemon runs as root for raw-socket network scanning
+      (NET_RAW/NET_ADMIN). Exception scoped to daemon pods by name pattern.
+    sec-issue: SEC-122
+spec:
+  exceptions:
+    - policyName: require-run-as-nonroot
+      ruleNames:
+        - require-nonroot
+  match:
+    any:
+      - resources:
+          kinds:
+            - Pod
+          namespaces:
+            - scanopy
+          names:
+            - "scanopy-daemon-*"

@@ -1,0 +1,23 @@
+---
+# OPS-808 — OKD Route for victorialogs.208.haist.farm
+# TLS edge termination — Pangolin front-proxies *.208.haist.farm (internal-only)
+# Auth: UI is internal only; Pangolin/Traefik handles access control at edge
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: victorialogs
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: victorialogs
+    app.kubernetes.io/component: log-storage
+spec:
+  host: victorialogs.208.haist.farm
+  to:
+    kind: Service
+    name: victorialogs
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

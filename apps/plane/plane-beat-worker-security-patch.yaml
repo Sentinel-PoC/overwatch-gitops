@@ -1,0 +1,80 @@
+---
+# OPS-767: Non-root securityContext patch for plane-beat-worker-wl
+# OPS-911: Add command: so ArgoCD SSA field manager owns the entrypoint.
+#
+# All Plane backend pods ran as uid=0(root) under anyuid SCC (confirmed 2026-05-19).
+# plane-backend:v0.24.0 (python:3.12.5-alpine) has no USER directive but sets
+# chmod -R 777 /code, making all app files world-writable.
+#
+# Celery beat (periodic task scheduler) shares the same image as plane-api and
+# plane-worker (plane-backend:v0.24.0). uid=1001 is suitable: beat writes schedule
+# state to /code (chmod 777), no network privileges required.
+#
+# UID 1001 is outside namespace UID range (1000970000+) so anyuid SCC remains assigned,
+# but the container executes as uid=1001 (non-root). KSV-0118 is satisfied.
+#
+# OPS-911 root cause: ArgoCD multi-source SSA applies Helm chart + kustomize patches
+# under the same field manager. When the patch omits command:, SSA drops it from the
+# live Deployment (no field manager claims it). plane-api avoids this because a prior
+# manual oc apply made kubectl the field-manager owner of command: for plane-api-wl.
+# Fix: include command: here so ArgoCD SSA explicitly owns and preserves the entrypoint.
+#
+# Note: This patch owns securityContext and command fields. No other patch or Helm chart
+# manager currently owns securityContext or command for plane-beat-worker-wl.
+#
+# Validate=false: allows partial container spec. Image field is REQUIRED even with
+# Validate=false -- K8s API rejects the manifest otherwise with "Required value".
+# image must match the Helm-rendered value to avoid SSA field-ownership conflict.
+# IgnoreExtraneous: suppresses RepeatedResourceWarning.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-beat-worker-wl
+  namespace: plane
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    backstage.io/component: plane
+spec:
+  selector:
+    matchLabels:
+      app.name: plane-plane-beat-worker
+  template:
+    metadata:
+      labels:
+        app.name: plane-plane-beat-worker
+        app.kubernetes.io/name: plane-beat-worker
+    spec:
+      # uid=1001 mirrors plane-api-wl and plane-worker-wl (same backend image).
+      # Celery beat does not bind ports; no capability escalation required.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+      - name: plane-beat-worker
+        # OPS-785: image required so K8s API accepts the partial Deployment.
+        # Must match Helm-rendered value ({beatworker.image}:{planeVersion}).
+        # Update if chart bumps planeVersion.
+        image: harbor.208.haist.farm/sentinel/plane-backend@sha256:f2d0fddc30a702cd084ee5523766797f2c3ff11f21041980850b3b752a613b28
+        imagePullPolicy: IfNotPresent
+        # OPS-911: command must be present so ArgoCD SSA field manager owns f:command.
+        # Without this, SSA drops command: from the live Deployment (no field manager
+        # claims it) and celery beat starts without its entrypoint script, exiting 0.
+        command:
+        - ./bin/docker-entrypoint-beat.sh
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        # OPS-951: livenessProbe merged from plane-liveness-probes.yaml (amend-3)
+        # Consolidated here to avoid kustomize duplicate-ID conflict.
+        livenessProbe:
+          exec:
+            command:
+            - python3
+            - manage.py
+            - check
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 30
+          failureThreshold: 3

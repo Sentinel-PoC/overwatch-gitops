@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: matrix-backup
+  labels:
+    # Isolated from matrix namespace intentionally (OPS-481 Phase 3):
+    # a matrix namespace wipe cannot take out backup tooling.
+    app.kubernetes.io/part-of: matrix-backup
+    istio-injection: disabled

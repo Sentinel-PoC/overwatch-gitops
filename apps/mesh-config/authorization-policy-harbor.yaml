@@ -1,0 +1,113 @@
+---
+# Harbor AuthorizationPolicies.
+#
+# The harbor namespace runs PERMISSIVE mTLS (see peer-authentication-harbor.yaml)
+# because the upstream chart connects components over in-container loopback
+# that bypasses sidecar mTLS. These policies are the compensating controls.
+#
+# Changes from the original allow-harbor-*-passthrough (SEC-52, 2026-04-17):
+# the original rules allowed source ip block 10.128.0.0/14 (entire OpenShift
+# pod CIDR) against harbor-core and harbor-registry with NO port restriction.
+# That meant any compromised pod could reach harbor's internal admin ports
+# (8080 controller, 8001 metrics, 5432 DB). Tightened here to only the ports
+# that have a legitimate cluster-wide use case:
+#   - harbor-core: port 80 only (API + proxy; used by Kyverno verify-images
+#     and by in-cluster CI pipelines hitting the registry via core)
+#   - harbor-registry: port 5000 only (docker pull/push)
+#
+# Admin/metrics ports (8080, 8001) are now only reachable by workload principal
+# allow-harbor-internal (harbor + harbor-redis + harbor-database SAs) and are
+# otherwise denied by the deny-all baseline.
+
+# Deny-all baseline for the namespace — everything else must explicitly allow.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: harbor
+spec: {}
+
+---
+# Ingress gateway → harbor-nginx frontend (serves external https://harbor.208.haist.farm)
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: harbor
+spec:
+  action: ALLOW
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: nginx
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway
+
+---
+# Harbor internal: harbor/harbor-redis/harbor-database service accounts can reach
+# any harbor component. Covers core<->registry, core<->db, jobservice<->redis etc.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-harbor-internal
+  namespace: harbor
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/harbor/sa/harbor
+              - cluster.local/ns/harbor/sa/harbor-redis
+              - cluster.local/ns/harbor/sa/harbor-database
+
+---
+# Cluster pods (10.128.0.0/14) → harbor-core port 80.
+# Needed for Kyverno's verify-images webhook and any in-cluster CI pipeline
+# hitting the harbor API. SCOPED to port 80 only — admin/metrics ports
+# (8080 controller, 8001 metrics) remain principal-restricted.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-harbor-core-cluster-pull
+  namespace: harbor
+spec:
+  action: ALLOW
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: core
+  rules:
+    - from:
+        - source:
+            ipBlocks:
+              - 10.128.0.0/14
+      to:
+        - operation:
+            ports:
+              - "80"
+
+---
+# Cluster pods (10.128.0.0/14) → harbor-registry port 5000.
+# Standard docker pull/push from cluster workloads. SCOPED to port 5000 only —
+# controller port 8080 and metrics 8001 remain principal-restricted.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-harbor-registry-cluster-pull
+  namespace: harbor
+spec:
+  action: ALLOW
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: registry
+  rules:
+    - from:
+        - source:
+            ipBlocks:
+              - 10.128.0.0/14
+      to:
+        - operation:
+            ports:
+              - "5000"

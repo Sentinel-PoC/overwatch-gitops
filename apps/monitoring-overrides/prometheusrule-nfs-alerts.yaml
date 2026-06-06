@@ -1,0 +1,88 @@
+# OPS-852 — Prometheus NFS-unreachable alert for OKD 4.21.0 nodes
+#
+# Follow-up from OPS-483 (Wazuh iSCSI/NFS alerting). The Prometheus half
+# ships here as a PrometheusRule CR in openshift-monitoring so the OKD
+# cluster Prometheus (which scrapes node_exporter on all nodes) evaluates it.
+#
+# NOTE: OPS-852 also tracks adding OKD node_exporter as a scrape target for
+# the standalone sentinel-prometheus instance; that work is deferred until
+# the Prometheus scrape config is updated. The rules below are evaluated
+# immediately by the cluster Prometheus against existing node_exporter data.
+#
+# Alert summary:
+#   NFSDeviceError        — node_exporter reports a filesystem device error on
+#                           an NFS mount; stale handle / unreachable server.
+#                           Critical; 2-minute hold to filter transient blips.
+#   NFSMountAvailZero     — NFS filesystem has 0 available bytes for >5 min.
+#                           Could be a full mount OR a dropped/stale mount;
+#                           warning severity because capacity fill is also valid.
+#   NFSMountReadOnly      — NFS filesystem remounted read-only. Typically the
+#                           kernel's last-resort on stale-handle recovery.
+#                           Warning; 5-minute hold.
+#
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: overwatch-nfs-alerts
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/name: overwatch-nfs-alerts
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-852
+spec:
+  groups:
+    - name: overwatch.nfs
+      interval: 1m
+      rules:
+
+        - alert: NFSDeviceError
+          expr: |
+            node_filesystem_device_error{fstype=~"nfs4?"} == 1
+          for: 2m
+          labels:
+            severity: critical
+            team: ops
+            service: nfs
+          annotations:
+            summary: "NFS device error on {{ $labels.instance }} mount {{ $labels.mountpoint }}"
+            description: >-
+              node_exporter on {{ $labels.instance }} reports a device error for
+              NFS mount {{ $labels.mountpoint }} (fstype={{ $labels.fstype }}).
+              This typically indicates a stale file handle or an unreachable NFS
+              server. Verify the NFS server is reachable and remount if necessary.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/e3e75635-456d-4832-a77e-ee15a2e58950
+
+        - alert: NFSMountAvailZero
+          expr: |
+            node_filesystem_avail_bytes{fstype=~"nfs4?"} == 0
+          for: 5m
+          labels:
+            severity: warning
+            team: ops
+            service: nfs
+          annotations:
+            summary: "NFS mount {{ $labels.mountpoint }} on {{ $labels.instance }} has 0 available bytes"
+            description: >-
+              NFS filesystem {{ $labels.mountpoint }} (fstype={{ $labels.fstype }}) on
+              {{ $labels.instance }} has reported 0 available bytes for more than 5 minutes.
+              This may indicate the mount is stale/dropped (metrics stuck at 0) or the
+              NFS volume is genuinely full. Check the NFS server export and node mount
+              status. If the mount is healthy and full, expand the NFS volume.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/e3e75635-456d-4832-a77e-ee15a2e58950
+
+        - alert: NFSMountReadOnly
+          expr: |
+            node_filesystem_readonly{fstype=~"nfs4?"} == 1
+          for: 5m
+          labels:
+            severity: warning
+            team: ops
+            service: nfs
+          annotations:
+            summary: "NFS mount {{ $labels.mountpoint }} on {{ $labels.instance }} is read-only"
+            description: >-
+              NFS filesystem {{ $labels.mountpoint }} (fstype={{ $labels.fstype }}) on
+              {{ $labels.instance }} has been read-only for more than 5 minutes.
+              The Linux kernel remounts NFS read-only as a stale-handle recovery
+              strategy. Investigate NFS server health and remount read-write.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/e3e75635-456d-4832-a77e-ee15a2e58950

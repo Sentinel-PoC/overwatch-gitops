@@ -1,0 +1,47 @@
+# OPS-332 Gap #6: code-owner gating on production / secret-management paths.
+#
+# Forgejo (Gitea-derived) honors CODEOWNERS at .gitea/CODEOWNERS, docs/,
+# or repo root. Pairs with the branch-protection rule on `main` having
+# "Require approval from code owners" enabled.
+#
+# Pattern syntax follows GitHub CODEOWNERS:
+#   <path-pattern> <user-or-team> <user-or-team>...
+# Last matching pattern wins. @koiakoia is the operator account.
+#
+# NIST controls: AC-5 (Separation of Duties), CM-3(4) (Configuration
+# Change Control — Restrict Changes), SA-15 (Development Process).
+
+# --- Production cluster manifests ---
+# clusters/overwatch/ is the canonical source-of-truth for the
+# production OKD cluster's ArgoCD Applications + cluster-config.
+# Any change here ripples through every app on the cluster.
+clusters/overwatch/**            @koiakoia
+
+# --- Cluster-scoped policy + admission control ---
+# Kyverno ClusterPolicies define what's admissible. Loosening these is
+# always a posture change.
+apps/kyverno-policies/**         @koiakoia
+apps/kyverno/**                  @koiakoia
+
+# --- Secret-management infrastructure ---
+# ExternalSecret CRDs, ClusterSecretStore configuration, and any secret
+# that mounts into a cluster workload.
+apps/external-secrets/**         @koiakoia
+**/external-secret*.yaml         @koiakoia
+**/externalsecret*.yaml          @koiakoia
+
+# --- Mesh ingress + routing ---
+# Gateway hosts list, VirtualService changes that re-route public
+# hostnames, AuthorizationPolicy changes.
+apps/mesh-config/**              @koiakoia
+
+# --- Supply-chain trust ---
+# trust-policy.yaml, signature verification config, Harbor pull-secret
+# manifests, the few places where signing trust is defined.
+**/trust-policy*.yaml            @koiakoia
+**/cosign-pubkey*.yaml           @koiakoia
+apps/harbor/**                   @koiakoia
+
+# --- The CODEOWNERS file itself ---
+# So nobody can quietly relax the gating without operator review.
+/.gitea/CODEOWNERS               @koiakoia

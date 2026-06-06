@@ -1,0 +1,20 @@
+---
+# Kiali (in istio-system, unmeshed) needs to reach Grafana (meshed, STRICT mTLS)
+# for health checks and dashboard integration. Allow PERMISSIVE on Grafana's ports
+# so unmeshed callers can connect.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: grafana-allow-plaintext
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    80:
+      mode: PERMISSIVE
+    3000:
+      mode: PERMISSIVE

@@ -1,0 +1,27 @@
+# cluster-monitoring-config
+#
+# Configures the OpenShift cluster monitoring stack (CMO-managed Prometheus).
+#
+# Live in: openshift-monitoring/cluster-monitoring-config (ConfigMap)
+# Managed by: monitoring-overrides ArgoCD application (overwatch-gitops)
+#   selfHeal=true prune=true — ArgoCD reconciles drift automatically.
+#
+# Change history:
+#   2026-02-04 — initial creation (enableUserWorkload: true)
+#   2026-05-26 — OPS-955: reduced Prometheus retention 15d -> 7d to relieve
+#               control-plane memory pressure (master-3 dropped 74% -> 60%
+#               immediately after apply; HighOverallControlPlaneMemory cleared).
+#               Live patch applied by lead-agent at 2026-05-26T16:13:30Z.
+#   2026-05-27 — OPS-960: moved from sentinel-iac/kubernetes/manifests/openshift-monitoring/
+#               to overwatch-gitops/apps/monitoring-overrides/ for ArgoCD self-heal coverage.
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+    prometheusK8s:
+      retention: 7d

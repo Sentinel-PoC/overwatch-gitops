@@ -1,0 +1,18 @@
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: forgejo-external
+  namespace: openshift-gitops
+spec:
+  hosts:
+  - forgejo.208.haist.farm
+  addresses:
+  - 192.168.12.168
+  ports:
+  - number: 443
+    name: tls
+    protocol: TLS
+  location: MESH_EXTERNAL
+  resolution: STATIC
+  endpoints:
+  - address: 192.168.12.168

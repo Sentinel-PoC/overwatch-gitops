@@ -1,0 +1,130 @@
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-web
+  namespace: plane
+  annotations:
+    haproxy.router.openshift.io/timeout: 60s
+spec:
+  host: plane.208.haist.farm
+  path: /
+  to:
+    kind: Service
+    name: plane-web
+    weight: 100
+  port:
+    targetPort: 3000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-api
+  namespace: plane
+spec:
+  host: plane.208.haist.farm
+  path: /api
+  to:
+    kind: Service
+    name: plane-api
+    weight: 100
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-auth
+  namespace: plane
+spec:
+  host: plane.208.haist.farm
+  path: /auth
+  to:
+    kind: Service
+    name: plane-api
+    weight: 100
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-live
+  namespace: plane
+  annotations:
+    haproxy.router.openshift.io/timeout: 3600s
+spec:
+  host: plane.208.haist.farm
+  path: /live
+  to:
+    kind: Service
+    name: plane-live
+    weight: 100
+  port:
+    targetPort: 3000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-spaces
+  namespace: plane
+spec:
+  host: plane.208.haist.farm
+  path: /spaces
+  to:
+    kind: Service
+    name: plane-space
+    weight: 100
+  port:
+    targetPort: 3000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-god-mode
+  namespace: plane
+spec:
+  host: plane.208.haist.farm
+  path: /god-mode
+  to:
+    kind: Service
+    name: plane-admin
+    weight: 100
+  port:
+    targetPort: 3000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: plane-uploads
+  namespace: plane
+spec:
+  host: plane.208.haist.farm
+  path: /uploads
+  to:
+    kind: Service
+    name: plane-minio
+    weight: 100
+  port:
+    targetPort: 9000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

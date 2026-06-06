@@ -1,0 +1,26 @@
+# OPS-481 Phase 2: ServiceAccount for harbor-backup CronJob.
+# No cross-namespace exec needed — pg_dump connects directly to the
+# harbor-database Service (TCP 5432). Only SCC binding required.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harbor-backup-sa
+  namespace: harbor-backup
+  labels:
+    app: harbor-backup
+---
+# SCC: anyuid — Alpine-based postgres + mc images may run as UID 0 on OKD.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: harbor-backup-anyuid
+  labels:
+    app: harbor-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: harbor-backup-sa
+    namespace: harbor-backup

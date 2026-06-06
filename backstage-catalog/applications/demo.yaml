@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: demo
+  description: Demo namespace resources — network policies and workloads in the demo namespace for testing and smoke verification
+  annotations:
+    backstage.io/kubernetes-namespace: demo
+    argocd/app-name: demo-netpol
+  tags:
+    - demo
+    - test
+    - networking
+    - overwatch
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: sentinel-platform

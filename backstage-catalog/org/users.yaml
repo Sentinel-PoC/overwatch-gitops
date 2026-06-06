@@ -1,0 +1,20 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: koiakoia
+spec:
+  profile:
+    displayName: Jim Haist
+    email: jim@haist.farm
+  memberOf: [admin, platform-team]
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: admin
+spec:
+  profile:
+    displayName: Sentinel Admin
+    email: admin@haist.farm
+  memberOf: [admin, platform-team]

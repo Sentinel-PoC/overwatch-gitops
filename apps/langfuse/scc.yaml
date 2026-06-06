@@ -1,0 +1,44 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: langfuse-anyuid-scc
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: langfuse
+  - kind: ServiceAccount
+    name: langfuse-langfuse-web
+    namespace: langfuse
+  - kind: ServiceAccount
+    name: langfuse-langfuse-worker
+    namespace: langfuse
+  - kind: ServiceAccount
+    name: langfuse-postgresql
+    namespace: langfuse
+  - kind: ServiceAccount
+    name: langfuse-clickhouse
+    namespace: langfuse
+  - kind: ServiceAccount
+    name: langfuse-redis
+    namespace: langfuse
+  - kind: ServiceAccount
+    name: langfuse-s3
+    namespace: langfuse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: langfuse-clickhouse-anyuid
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: langfuse

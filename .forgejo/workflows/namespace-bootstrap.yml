@@ -1,0 +1,349 @@
+---
+# OPS-883: Bootstrap ArgoCD app namespaces from CI, not from ArgoCD itself.
+#
+# Problem: ArgoCD Application resources use syncOptions: [CreateNamespace=true]
+# but the application-controller ServiceAccount is namespace-scoped and lacks
+# cluster-wide permission to create namespaces. This causes apps to sit in
+# Sync=Unknown silently when the target namespace does not exist.
+# Confirmed: harbor-backup, keycloak-backup, langfuse-backup, matrix-backup
+# were all stuck for 5-9 days due to this failure mode (backlog-burn-028).
+#
+# Solution: After every merge to main, this workflow scans all ArgoCD Application
+# manifests in clusters/overwatch/apps/*.yaml, extracts each spec.destination.namespace,
+# renders a minimal Namespace manifest with the argocd.argoproj.io/managed-by label,
+# and applies it via oc apply (idempotent).
+#
+# The namespace creation privilege lives in CI (where privileged credentials already
+# exist), not in the ArgoCD runtime SA. Failures surface as CI build breaks, not
+# silent runtime drift. This is the deliberate security posture: no cluster-admin
+# on runtime SA.
+#
+# Credential scope: Vault path secret/iac/ci-namespace-bootstrap.kubeconfig
+# holds a kubeconfig with ONLY: create/get/patch/label namespaces at cluster scope.
+# The kubeconfig MUST NOT be cluster-admin. See OPS-883 for ServiceAccount/ClusterRole
+# setup procedure.
+#
+# PREREQUISITE: Before this workflow can run successfully, an operator must:
+#   1. Create a ServiceAccount + ClusterRole + ClusterRoleBinding in OKD with
+#      only namespace create/get/patch/label permissions.
+#   2. Store its kubeconfig in Vault at: secret/iac/ci-namespace-bootstrap.kubeconfig
+#      (field: kubeconfig)
+#   3. Add VAULT_ROOT_TOKEN as a Forgejo Actions secret for this repo
+#      (already set in sentinel-iac; needs adding here too).
+#   Until these are done, the apply-namespaces job will fail with a clear error.
+#
+# Deletion semantics: this workflow does NOT prune namespaces. If an apps/* directory
+# is removed, the namespace lingers (with whatever resources ArgoCD left). Cleanup
+# is manual. This is intentional -- accidental namespace deletion is catastrophic.
+#
+# Application manifest path: clusters/overwatch/apps/*.yaml
+# (Issue OPS-883 spec says apps/*/application.yaml; this repo uses the clusters/
+# layout instead. This workflow uses the actual repo structure.)
+
+name: Namespace Bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - clusters/overwatch/apps/**
+  workflow_dispatch: {}
+
+env:
+  VAULT_ADDR: https://vault.208.haist.farm
+  VAULT_KUBECONFIG_PATH: secret/iac/ci-namespace-bootstrap.kubeconfig
+  VAULT_KUBECONFIG_FIELD: kubeconfig
+  ARGOCD_MANAGED_BY_NS: openshift-gitops
+
+jobs:
+  validate-namespaces:
+    # Pre-merge: warn if a new Application adds a destination.namespace that
+    # does not yet have a corresponding apply step. This is a defense-in-depth
+    # check — the bootstrap apply runs post-merge, but a PR-time warning helps
+    # authors catch missing namespace setup before merge.
+    runs-on: iac
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new destination namespaces in PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "=== OPS-883: Namespace validation pre-merge ==="
+          echo "Scanning PR diff for new ArgoCD Application destination namespaces..."
+
+          # Get files changed in this PR
+          FILES=$(curl -sk -H "Authorization: token ${GITHUB_TOKEN}" \
+            "https://forgejo.208.haist.farm/api/v1/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?limit=300" \
+            | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          files = [f.get('filename', '') for f in data if isinstance(f, dict)]
+          print('\n'.join(files))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$FILES" ]; then
+            echo "No file list available — skipping namespace check"
+            exit 0
+          fi
+
+          NEW_APP_FILES=$(echo "$FILES" | grep -E '^clusters/overwatch/apps/.*\.yaml$' || true)
+          if [ -z "$NEW_APP_FILES" ]; then
+            echo "No Application files changed in this PR — no namespace check needed"
+            exit 0
+          fi
+
+          echo "Changed Application files:"
+          echo "$NEW_APP_FILES"
+          echo ""
+
+          WARN=0
+          while IFS= read -r APP_FILE; do
+            [ -z "$APP_FILE" ] && continue
+            if [ ! -f "$APP_FILE" ]; then
+              echo "  SKIP (deleted): $APP_FILE"
+              continue
+            fi
+            # Extract destination namespace
+            NS=$(python3 -c "
+          import sys, re
+          content = open('$APP_FILE').read()
+          # Only process ArgoCD Application resources
+          if 'kind: Application' not in content:
+              sys.exit(0)
+          m = re.search(r'destination:\s*\n(?:.*\n)*?.*namespace:\s+(\S+)', content)
+          if m:
+              print(m.group(1))
+          " 2>/dev/null || echo "")
+            if [ -z "$NS" ]; then
+              continue
+            fi
+            echo "  Application $(basename $APP_FILE) -> namespace: $NS"
+            # The namespace will be created post-merge by apply-namespaces job
+            # Just inform, do not fail
+            echo "  INFO: namespace '$NS' will be bootstrapped by CI after merge"
+          done <<< "$NEW_APP_FILES"
+
+          if [ "$WARN" -ne 0 ]; then
+            echo ""
+            echo "::warning::Some Application namespaces may not exist yet. They will be created post-merge by the namespace-bootstrap workflow."
+          fi
+          echo "Namespace pre-merge check complete."
+
+  apply-namespaces:
+    # Post-merge: scan all Application manifests, extract destination namespaces,
+    # apply each as a Namespace resource with the managed-by label.
+    runs-on: iac-buildah
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull namespace-bootstrap kubeconfig from Vault
+        env:
+          VAULT_TOKEN: ${{ secrets.VAULT_ROOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "=== OPS-883: Fetching CI kubeconfig from Vault ==="
+          echo "Vault path: ${VAULT_KUBECONFIG_PATH} (field: ${VAULT_KUBECONFIG_FIELD})"
+
+          # Write to a workflow-private path.
+          # IMPORTANT: never write to ${HOME}/.kube/config on iac-control —
+          # that path is a symlink to the operator's persistent kubeconfig.
+          # See okd-upgrade-prod.yaml comment for the incident that caused this
+          # policy (vault 403 + empty-write wiped operator kubeconfig mid-session).
+          KCFG="${RUNNER_TEMP:-/tmp}/ns-bootstrap-kubeconfig-${GITHUB_RUN_ID}"
+          : > "${KCFG}"
+          chmod 0600 "${KCFG}"
+
+          vault kv get \
+            -field="${VAULT_KUBECONFIG_FIELD}" \
+            "${VAULT_KUBECONFIG_PATH}" \
+            > "${KCFG}" 2>&1 || true
+
+          # vault kv get exits 0 on 403 (policy denied / token expired) and
+          # writes an error message to stdout. Guard: check the file has kubeconfig
+          # content (must start with 'apiVersion:').
+          if [[ ! -s "${KCFG}" ]]; then
+            echo "::error::FAIL: Vault returned empty output for ${VAULT_KUBECONFIG_PATH}."
+            echo "::error::Likely causes: (1) VAULT_ROOT_TOKEN secret not set in this repo,"
+            echo "::error::  (2) Vault path does not exist — create the namespace-bootstrap SA"
+            echo "::error::  kubeconfig per OPS-883 prerequisite steps, then store at"
+            echo "::error::  ${VAULT_KUBECONFIG_PATH} field=${VAULT_KUBECONFIG_FIELD}"
+            echo "## Namespace Bootstrap BLOCKED — Vault kubeconfig missing" >> "${GITHUB_STEP_SUMMARY}"
+            echo "See OPS-883 prerequisites in workflow comment header." >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+
+          if ! grep -q '^apiVersion:' "${KCFG}"; then
+            echo "::error::FAIL: Retrieved content does not look like a kubeconfig (no apiVersion: line)."
+            echo "::error::vault may have returned an error message instead of the kubeconfig."
+            echo "::error::Content preview: $(head -c 200 ${KCFG})"
+            rm -f "${KCFG}"
+            exit 1
+          fi
+
+          echo "Kubeconfig fetched successfully ($(wc -c < ${KCFG}) bytes)"
+          echo "KUBECONFIG=${KCFG}" >> "${GITHUB_ENV}"
+
+      - name: Extract destination namespaces from Application manifests
+        run: |
+          set -euo pipefail
+          echo "=== OPS-883: Scanning Application manifests ==="
+          echo "Path: clusters/overwatch/apps/*.yaml"
+          echo ""
+
+          # Extract all destination namespaces from ArgoCD Application resources.
+          # Writes newline-delimited namespace names to /tmp/ns-list.txt.
+          python3 - << 'PYEOF'
+          import os, re, sys
+
+          app_dir = "clusters/overwatch/apps"
+          namespaces = set()
+
+          if not os.path.isdir(app_dir):
+              print(f"ERROR: {app_dir} not found", file=sys.stderr)
+              sys.exit(1)
+
+          for fname in sorted(os.listdir(app_dir)):
+              if not fname.endswith(".yaml") and not fname.endswith(".yml"):
+                  continue
+              fpath = os.path.join(app_dir, fname)
+              try:
+                  content = open(fpath).read()
+              except Exception as e:
+                  print(f"  SKIP {fname}: {e}")
+                  continue
+
+              # Only process ArgoCD Application resources
+              if "kind: Application" not in content:
+                  continue
+
+              # Extract destination.namespace — look for the namespace key
+              # that follows the destination: block. This handles the YAML
+              # structure where destination has server and namespace sub-keys.
+              # Use a simple two-pass: find destination block, then namespace.
+              dest_match = re.search(
+                  r'destination:\s*\n((?:[ \t]+\S.*\n)*)',
+                  content
+              )
+              if not dest_match:
+                  print(f"  SKIP {fname}: no destination block found")
+                  continue
+
+              dest_block = dest_match.group(1)
+              ns_match = re.search(r'namespace:\s+(\S+)', dest_block)
+              if not ns_match:
+                  print(f"  SKIP {fname}: no namespace in destination block")
+                  continue
+
+              ns = ns_match.group(1)
+              print(f"  {fname} -> {ns}")
+              namespaces.add(ns)
+
+          if not namespaces:
+              print("WARNING: no namespaces found in Application manifests", file=sys.stderr)
+              # Write empty file — apply step will be a no-op
+          else:
+              print(f"\nTotal namespaces to bootstrap: {len(namespaces)}")
+
+          with open("/tmp/ns-list.txt", "w") as f:
+              f.write("\n".join(sorted(namespaces)) + "\n")
+          PYEOF
+
+          echo ""
+          echo "Namespace list:"
+          cat /tmp/ns-list.txt
+
+      - name: Apply namespace manifests
+        run: |
+          set -euo pipefail
+          echo "=== OPS-883: Applying namespace manifests ==="
+          echo "Managed-by label: argocd.argoproj.io/managed-by=${ARGOCD_MANAGED_BY_NS}"
+          echo ""
+
+          # Verify cluster connectivity before applying
+          echo "Cluster identity check:"
+          oc whoami 2>&1 || {
+            echo "::error::oc whoami failed — kubeconfig may be invalid or cluster unreachable"
+            exit 1
+          }
+
+          CREATED=0
+          UNCHANGED=0
+          PATCHED=0
+          ERRORS=0
+
+          while IFS= read -r NS; do
+            [ -z "$NS" ] && continue
+
+            echo ""
+            echo "--- Namespace: ${NS} ---"
+
+            # Render and apply the namespace manifest.
+            # oc apply is idempotent: creates if absent, patches if present.
+            # The argocd.argoproj.io/managed-by label is required for ArgoCD
+            # to recognize this namespace as managed and attempt sync.
+            NS_MANIFEST=$(cat << EOF
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: ${NS}
+            labels:
+              argocd.argoproj.io/managed-by: ${ARGOCD_MANAGED_BY_NS}
+          EOF
+          )
+            # Capture output to detect create vs unchanged vs configured
+            RESULT=$(echo "${NS_MANIFEST}" | oc apply -f - 2>&1) || {
+              echo "::error::Failed to apply namespace ${NS}: ${RESULT}"
+              ERRORS=$((ERRORS + 1))
+              continue
+            }
+
+            echo "${RESULT}"
+            if echo "${RESULT}" | grep -q "created"; then
+              CREATED=$((CREATED + 1))
+              echo "::notice::Namespace ${NS} created"
+            elif echo "${RESULT}" | grep -q "configured"; then
+              PATCHED=$((PATCHED + 1))
+              echo "::notice::Namespace ${NS} label updated (was missing or incorrect)"
+            else
+              UNCHANGED=$((UNCHANGED + 1))
+            fi
+          done < /tmp/ns-list.txt
+
+          echo ""
+          echo "=== Summary ==="
+          echo "Created:   ${CREATED}"
+          echo "Updated:   ${PATCHED}"
+          echo "Unchanged: ${UNCHANGED}"
+          echo "Errors:    ${ERRORS}"
+          {
+            echo "## Namespace Bootstrap — OPS-883"
+            echo "| Metric | Count |"
+            echo "|--------|-------|"
+            echo "| Created | ${CREATED} |"
+            echo "| Updated (label) | ${PATCHED} |"
+            echo "| Unchanged | ${UNCHANGED} |"
+            echo "| Errors | ${ERRORS} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ "${ERRORS}" -gt 0 ]; then
+            echo "::error::${ERRORS} namespace(s) failed to apply — see step output"
+            exit 1
+          fi
+
+          echo ""
+          echo "Namespace bootstrap complete. ArgoCD should begin syncing previously-stuck apps."
+
+      - name: Cleanup kubeconfig
+        if: always()
+        run: |
+          KCFG="${RUNNER_TEMP:-/tmp}/ns-bootstrap-kubeconfig-${GITHUB_RUN_ID}"
+          if [ -f "${KCFG}" ]; then
+            rm -f "${KCFG}"
+            echo "Kubeconfig cleaned up."
+          fi

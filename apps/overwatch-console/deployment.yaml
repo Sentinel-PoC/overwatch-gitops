@@ -1,0 +1,104 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overwatch-console
+  namespace: overwatch-console
+  labels:
+    app.kubernetes.io/name: overwatch-console
+    app.kubernetes.io/instance: overwatch-console
+    app.kubernetes.io/component: dashboard
+  annotations:
+    backstage.io/component: overwatch-console
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: overwatch-console
+      app.kubernetes.io/instance: overwatch-console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: overwatch-console
+        app.kubernetes.io/instance: overwatch-console
+        app.kubernetes.io/component: dashboard
+      annotations:
+        sidecar.istio.io/inject: "true"
+        secret.reloader.stakater.com/reload: "overwatch-console-credentials"
+    spec:
+      serviceAccountName: overwatch-console
+      containers:
+        - name: overwatch-console
+          image: harbor.208.haist.farm/sentinel/overwatch-console@sha256:db1e199e36383a4fa74b4ecc3b09099da47049f613fdfbb9a7d19918131ebb48
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: overwatch-console-credentials
+          env:
+            - name: OC_AUTH_DISABLED
+              value: "false"
+            - name: OC_OIDC_ISSUER
+              value: "https://auth-next.208.haist.farm/application/o/haists-website/"
+            - name: OC_OIDC_JWKS_URI
+              value: "https://auth-next.208.haist.farm/application/o/haists-website/jwks/"
+            - name: OC_ALLOWED_CLIENTS
+              value: "eS1NrbsGujKYxWV3tuuAzNswQhlMTjX8w9XaVPPY"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: overwatch-console
+  namespace: overwatch-console
+  labels:
+    app.kubernetes.io/name: overwatch-console
+    app.kubernetes.io/instance: overwatch-console
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: overwatch-console
+    app.kubernetes.io/instance: overwatch-console

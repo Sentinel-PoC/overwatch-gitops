@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homepage
+  namespace: homepage
+  labels:
+    app: homepage
+    app.kubernetes.io/name: homepage
+  annotations:
+    backstage.io/component: homepage
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: homepage
+  template:
+    metadata:
+      labels:
+        app: homepage
+        app.kubernetes.io/name: homepage
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: init-config
+          image: harbor.208.haist.farm/sentinel/busybox@sha256:91c66c844e6bba57e92e10e755e73a816d0b99edd17eb5297d9ac519ab3a8c81
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              cp /configmaps/settings/settings.yaml /app/config/settings.yaml
+              cp /configmaps/services/services.yaml /app/config/services.yaml
+              cp /configmaps/widgets/widgets.yaml /app/config/widgets.yaml
+              cp /configmaps/bookmarks/bookmarks.yaml /app/config/bookmarks.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+            - name: config-settings
+              mountPath: /configmaps/settings
+            - name: config-services
+              mountPath: /configmaps/services
+            - name: config-widgets
+              mountPath: /configmaps/widgets
+            - name: config-bookmarks
+              mountPath: /configmaps/bookmarks
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: homepage
+          image: harbor.208.haist.farm/sentinel/homepage@sha256:591d05e9b98924dfe64bee09a823d4361523304ae58b42be034bcdfd0c46024c
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: home.208.haist.farm
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: config-settings
+          configMap:
+            name: homepage-settings
+        - name: config-services
+          configMap:
+            name: homepage-services
+        - name: config-widgets
+          configMap:
+            name: homepage-widgets
+        - name: config-bookmarks
+          configMap:
+            name: homepage-bookmarks

@@ -1,0 +1,29 @@
+# OPS-750: NetworkPolicy baseline for the istio-cni namespace.
+# Safe to apply: istio-cni DaemonSet uses hostNetwork=true and is exempt
+# from NetworkPolicy enforcement in OCP OVN-K. See apps/istio-cni/network-policies.yaml
+# for the full architecture note.
+#
+# VERIFICATION REQUIRED before autoSync goes live:
+#   kubectl get ds -n istio-cni -o jsonpath='{.items[0].spec.template.spec.hostNetwork}'
+# Expected: "true"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-cni-netpol
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/istio-cni
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-cni
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ops-scripts
+  namespace: sentinel-ops
+data:
+  grafana-health.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    GRAFANA_URL="https://grafana.208.haist.farm"
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "${GRAFANA_URL}/api/health")
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Grafana healthy"
+    else
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Grafana unhealthy: HTTP ${HTTP_CODE}" >&2
+        exit 1
+    fi
+  minio-replicate.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    MINIO_PRIMARY="${MINIO_ENDPOINT:-http://192.168.12.58:9000}"
+    MINIO_REPLICA="http://192.168.12.59:9000"
+    MINIO_AK="${MINIO_ACCESS_KEY:-}"
+    MINIO_SK="${MINIO_SECRET_KEY:-}"
+
+    log() { echo "[$(date -u +%H:%M:%S)] $*"; }
+
+    # OKD runs containers as non-root; mc needs a writable config dir
+    export MC_CONFIG_DIR=/tmp/.mc
+
+    log "Configuring mc aliases..."
+    mc alias set primary "${MINIO_PRIMARY}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 2>&1 || { log "FATAL: Cannot configure primary MinIO alias"; exit 1; }
+    mc alias set replica "${MINIO_REPLICA}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 2>&1 || { log "FATAL: Cannot configure replica MinIO alias"; exit 1; }
+
+    # Verify actual connectivity before attempting replication
+    log "Testing primary MinIO connectivity..."
+    if ! mc ls primary/ --connect-timeout 10 >/dev/null 2>&1; then
+        log "FATAL: Cannot reach primary MinIO at ${MINIO_PRIMARY}"
+        exit 1
+    fi
+    log "Primary MinIO reachable"
+
+    log "Testing replica MinIO connectivity..."
+    if ! mc ls replica/ --connect-timeout 10 >/dev/null 2>&1; then
+        log "FATAL: Cannot reach replica MinIO at ${MINIO_REPLICA}"
+        exit 1
+    fi
+    log "Replica MinIO reachable"
+
+    BUCKETS="vault-backups gitlab-backups etcd-backups terraform-state"
+    FAILURES=0
+
+    for bucket in $BUCKETS; do
+        log "Replicating ${bucket}..."
+        if mc mirror --overwrite "primary/${bucket}" "replica/${bucket}" 2>&1; then
+            log "${bucket}: OK"
+        else
+            log "${bucket}: FAILED"
+            FAILURES=$((FAILURES + 1))
+        fi
+    done
+
+    if [ "$FAILURES" -gt 0 ]; then
+        log "Replication completed with ${FAILURES} failures"
+        exit 1
+    fi
+    log "All buckets replicated successfully"
+  gitlab-pat-rotate.sh: |
+    #!/bin/bash
+    # GitLab PAT rotation removed — migrated to Forgejo (OPS-16)
+    exit 0

@@ -1,0 +1,30 @@
+---
+# ServiceEntry for the UniFi-network Prometheus exporter running on iac-control.
+# Grafana in the monitoring namespace scrapes http://192.168.12.210:9099 as a
+# secondary datasource. Added 2026-04-17 under SEC-51 when outboundTrafficPolicy
+# was switched from ALLOW_ANY to REGISTRY_ONLY — without this entry Grafana's
+# sidecar sends those requests to BlackHoleCluster.
+#
+# The listening process on iac-control is the prometheus server scraping the
+# UniFi exporter, managed by the iac-control ansible role (prometheus_port
+# default 9099).
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: iac-control-prometheus
+  namespace: monitoring
+spec:
+  hosts:
+    - iac-control-prometheus.internal
+  addresses:
+    - 192.168.12.210/32
+  ports:
+    - number: 9099
+      name: http
+      protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: STATIC
+  endpoints:
+    - address: 192.168.12.210
+      ports:
+        http: 9099

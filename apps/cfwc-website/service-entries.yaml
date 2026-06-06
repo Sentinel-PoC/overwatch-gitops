@@ -1,0 +1,19 @@
+---
+# Anthropic Messages API — only external destination this site needs.
+# api.anthropic.com resolves to a fronted CDN, so we use HOSTS resolution
+# rather than a static IP. Mesh-external; matches the pattern used for
+# Jellyfin's metadata-providers ServiceEntry.
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: anthropic-api
+  namespace: cfwc-website
+spec:
+  hosts:
+    - api.anthropic.com
+  ports:
+    - number: 443
+      name: https
+      protocol: TLS
+  location: MESH_EXTERNAL
+  resolution: DNS

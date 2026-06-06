@@ -1,0 +1,161 @@
+---
+# Idempotent setup Job for Langfuse evaluators — LLM connection only.
+#
+# Runs once on initial deploy (no ArgoCD hook — re-run requires operator
+# delete + re-sync). Uses the Langfuse v3 public API to:
+#
+#   1. Create or update the Gemini LLM connection (so evaluators can
+#      call it). Keyed on provider name; safe to re-run.
+#
+# What is NOT done here (moved to one-time UI procedure, runbook 08):
+#   - Evaluator templates (PUT /api/public/evaluator-templates/{name}
+#     does not exist in Langfuse v3 public API — tRPC internal only)
+#   - Running evaluator configurations (same reason)
+#
+# Why no ArgoCD hook:
+#   The LLM connection is very stable (changes only when Gemini API key
+#   rotates). Running on every sync would cause unnecessary churn.
+#   Operator re-runs by: kubectl -n langfuse delete job langfuse-evaluators-setup
+#   then argocd app sync langfuse.
+#
+# Authentication:
+#   Project-scoped basic auth (LANGFUSE_PROJECT_PUBLIC_KEY:LANGFUSE_PROJECT_SECRET_KEY)
+#   base64-encoded. The llm-connections endpoint is per-project in
+#   Langfuse v3; projectId is derived from the auth token, not the body.
+#
+# Idempotency:
+#   PUT /api/public/llm-connections upserts on (projectId, provider).
+#   Re-running the Job on a cluster where the connection already exists
+#   updates it in place — no error, no duplicate.
+#
+# Failure modes the Job handles loudly:
+#   - Missing LANGFUSE_PROJECT_PUBLIC_KEY or _SECRET_KEY → fails fast
+#   - Langfuse API returns 401/403 → exits non-zero with clear message
+#   - Gemini API key rejected by Langfuse → exits non-zero; operator
+#     fixes Vault at secret/langfuse/overwatch-agents
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: langfuse-evaluators-setup
+  namespace: langfuse
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # No retry — if the Job fails, operator should read logs and fix
+  # root cause rather than backoff-retry into the same error.
+  backoffLimit: 0
+  # Keep completed pods for 24h so operator can grep logs post-sync.
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: langfuse-evaluators-setup
+    spec:
+      restartPolicy: Never
+      # OPS-886 follow-up: harbor.208.haist.farm/sentinel/alpine-tools is a private
+      # Harbor image; the Job needs imagePullSecrets to pull it (default-namespace
+      # secret harbor-pull-secret already exists, 56d old).
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      serviceAccountName: default
+      containers:
+        - name: setup
+          # OPS-886: alpine:3.20 with runtime `apk add` fails — langfuse namespace
+          # has default-deny-all egress; only allow-minio-egress + allow-dns + allow-same-namespace
+          # are open, so dl-cdn.alpinelinux.org returns 403.
+          # Fix: harbor.208.haist.farm/sentinel/alpine-tools:3.20 is alpine:3.20 with
+          # bash/curl/jq pre-installed (built 2026-05-27, pushed by worker-886-langfuse).
+          # Dockerfile: FROM alpine:3.20; RUN apk add --no-cache bash curl jq
+          image: harbor.208.haist.farm/sentinel/alpine-tools@sha256:d4d965bf0ad4ef0a87fd736e69c1ac39a3a5f06de539f02866a67b7618e9a827
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: LANGFUSE_BASE_URL
+              value: http://langfuse-web.langfuse.svc.cluster.local:3000
+            - name: LANGFUSE_PROJECT_ID
+              value: overwatch-agents
+          envFrom:
+            - secretRef:
+                name: langfuse-evaluators-credentials
+          volumeMounts:
+            - name: script
+              mountPath: /script
+              readOnly: true
+          command: ["/bin/bash", "/script/setup.sh"]
+      volumes:
+        - name: script
+          configMap:
+            name: langfuse-evaluator-setup-script
+            defaultMode: 0755
+---
+# The setup script lives in its own ConfigMap so edits to the script
+# re-trigger the Job independently of other changes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: langfuse-evaluator-setup-script
+  namespace: langfuse
+data:
+  setup.sh: |
+    #!/usr/bin/env bash
+    # Idempotent Langfuse evaluator setup — LLM connection only.
+    # Evaluator templates and configs are created once via UI (runbook 08).
+    set -euo pipefail
+
+    # --- guardrails ---------------------------------------------------
+    : "${LANGFUSE_BASE_URL:?must be set}"
+    : "${LANGFUSE_PROJECT_PUBLIC_KEY:?must be set — Vault secret/langfuse/overwatch-agents field public_key}"
+    : "${LANGFUSE_PROJECT_SECRET_KEY:?must be set — Vault secret/langfuse/overwatch-agents field secret_key}"
+    : "${GEMINI_API_KEY:?must be set — Vault secret/gemini field api_key}"
+
+    # Project-scoped basic auth: base64(public_key:secret_key)
+    BASIC_AUTH=$(printf '%s:%s' "${LANGFUSE_PROJECT_PUBLIC_KEY}" "${LANGFUSE_PROJECT_SECRET_KEY}" | base64 | tr -d '\n')
+    AUTH=(-H "Authorization: Basic ${BASIC_AUTH}")
+    JSON=(-H "Content-Type: application/json")
+
+    echo "────────────────────────────────────────────"
+    echo " Langfuse evaluators setup — OPS-239"
+    echo " Base URL: $LANGFUSE_BASE_URL"
+    echo "────────────────────────────────────────────"
+
+    # --- 1. Upsert Gemini LLM connection ------------------------------
+    # PUT /api/public/llm-connections upserts on (projectId, provider).
+    # projectId is derived from the project-scoped auth token — not
+    # required in the body.
+    #
+    # adapter: "google-ai-studio" is LLMAdapter.GoogleAIStudio from the
+    # Langfuse v3 source (packages/shared/src/...LLMAdapter enum).
+    # provider: a human-readable name used as the upsert key — must be
+    # stable across re-runs.
+    #
+    # Model: gemini-2.5-flash — cheap, fast, suitable for 1-5 scoring.
+    # gemini-2.5-pro is the upgrade if judge disagreement is observed
+    # during BSides calibration.
+    echo "[1/1] Upserting Gemini LLM connection..."
+    CONN_PAYLOAD=$(jq -n \
+      --arg key "$GEMINI_API_KEY" \
+      '{
+        provider: "gemini-judge",
+        adapter:  "google-ai-studio",
+        secretKey: $key,
+        withDefaultModels: true,
+        customModels: ["gemini-2.5-flash", "gemini-2.5-pro"]
+      }')
+    HTTP_STATUS=$(echo "$CONN_PAYLOAD" | curl -sfS "${AUTH[@]}" "${JSON[@]}" \
+      -X PUT "${LANGFUSE_BASE_URL}/api/public/llm-connections" \
+      --data @- -o /tmp/conn_resp.json -w "%{http_code}" 2>/dev/null || echo "000")
+    if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
+      echo "ERROR: LLM connection upsert failed (HTTP ${HTTP_STATUS})."
+      echo "  Check LANGFUSE_PROJECT_PUBLIC_KEY / LANGFUSE_PROJECT_SECRET_KEY scope."
+      echo "  Response: $(cat /tmp/conn_resp.json 2>/dev/null || echo 'no body')"
+      echo "  See runbook 08 for bootstrap steps."
+      exit 1
+    fi
+    echo "  ✓ Gemini connection 'gemini-judge' ready (HTTP ${HTTP_STATUS})"
+
+    echo "────────────────────────────────────────────"
+    echo " LLM connection setup complete."
+    echo " Next steps (one-time, via Langfuse UI):"
+    echo "  1. Create 8 evaluator templates — runbook 08 UI procedure"
+    echo "  2. Create 8 running evaluator configs — runbook 08 UI procedure"
+    echo "  3. Run calibration set (runbook 08) — 3 good + 3 bad traces"
+    echo "────────────────────────────────────────────"

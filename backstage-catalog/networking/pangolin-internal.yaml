@@ -1,0 +1,18 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: pangolin-internal
+  description: Internal OKD route configuration for pangolin-proxy Traefik ingress
+  annotations:
+    backstage.io/kubernetes-namespace: pangolin-internal
+  tags:
+    - networking
+    - ingress
+    - routing
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: element-web
+  namespace: matrix
+  labels:
+    app: element-web
+  annotations:
+    reloader.stakater.com/auto: "true"
+    backstage.io/component: matrix-element-web
+spec:
+  replicas: 1
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: element-web
+  template:
+    metadata:
+      labels:
+        app: element-web
+        app.kubernetes.io/name: element-web
+    spec:
+      serviceAccountName: matrix-sa
+      enableServiceLinks: false
+      containers:
+        - name: element-web
+          image: harbor.208.haist.farm/sentinel/element-web@sha256:90fa2771e0c41d215bdd198160d3f6003ab94348779c57f3b7fdb29c2fbd6cbc
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: element-config
+              mountPath: /app/config.json
+              subPath: config.json
+            - name: element-config
+              mountPath: /etc/nginx/templates/default.conf.template
+              subPath: nginx.conf
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: element-config
+          configMap:
+            name: element-config

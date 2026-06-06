@@ -1,0 +1,22 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: health-checker
+  description: Health checker service — periodic liveness probes for platform endpoints; alerts via ntfy on failures
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=health-checker
+    backstage.io/kubernetes-namespace: health-monitoring
+    argocd/app-name: health-checker
+  tags:
+    - monitoring
+    - health-check
+    - platform
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:ntfy

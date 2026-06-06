@@ -1,0 +1,28 @@
+---
+apiVersion: jaegertracing.io/v1
+kind: Jaeger
+metadata:
+  name: jaeger
+  namespace: observability
+spec:
+  strategy: allInOne
+  allInOne:
+    image: harbor.208.haist.farm/sentinel/jaeger-all-in-one@sha256:f52eaf7750b3ade17accc429d837394e8032f283256033846ac548d4e91228b2
+    options:
+      log-level: info
+      memory:
+        max-traces: "100000"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  storage:
+    type: memory
+    options:
+      memory:
+        max-traces: "100000"
+  ingress:
+    enabled: false

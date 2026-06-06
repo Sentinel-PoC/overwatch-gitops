@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse-clickhouse
+  namespace: langfuse
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/instance: langfuse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clickhouse
+      app.kubernetes.io/instance: langfuse
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: clickhouse
+        app.kubernetes.io/instance: langfuse
+    spec:
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      imagePullSecrets:
+      - name: harbor-pull-secret
+      containers:
+      - name: clickhouse
+        image: harbor.208.haist.farm/sentinel/clickhouse-server@sha256:800eaef3260b5995f389d3d2ad14234ad4aff1190e7ee1eca89a7947d3108364
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8123
+          name: http
+        - containerPort: 9000
+          name: native
+        - containerPort: 9181
+          name: keeper
+        env:
+        - name: CLICKHOUSE_USER
+          value: default
+        # SEC-48: password sourced from Vault via langfuse-clickhouse-creds
+        # ExternalSecret. Rotation procedure documented in that manifest.
+        - name: CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-clickhouse-creds
+              key: CLICKHOUSE_PASSWORD
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/clickhouse
+        - name: config
+          mountPath: /etc/clickhouse-server/config.d/override.xml
+          subPath: override.xml
+        - name: config
+          mountPath: /etc/clickhouse-server/config.d/backup-disk.xml
+          subPath: backup-disk.xml
+        # OPS-306: disable real-time query profiler permanently (trace_log runaway prevention)
+        # OPS-1115: also disables CPU-time profiler via users-override.xml
+        - name: config
+          mountPath: /etc/clickhouse-server/users.d/profile-override.xml
+          subPath: users-override.xml
+        # OPS-1115: 3-day TTL on all system log tables (belt-and-suspenders PVC fill prevention)
+        - name: config
+          mountPath: /etc/clickhouse-server/config.d/system-logs-ttl.xml
+          subPath: system-logs-ttl.xml
+        # OPS-460: backup volumeMount removed — langfuse-ch-backup PVC and
+        # nfs-langfuse-ch-backup-pv were removed from git (S3 backup strategy),
+        # but this mount was not cleaned up. PVC/PV were pruned by ArgoCD on
+        # 2026-05-09 causing the pod to enter FailedScheduling.
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: '4'
+            memory: 8Gi
+        startupProbe:
+          httpGet:
+            path: /ping
+            port: 8123
+          failureThreshold: 360
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8123
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8123
+          periodSeconds: 10
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: langfuse-clickhouse-data
+      - name: config
+        configMap:
+          name: langfuse-clickhouse-config
+      # OPS-460: backup volume removed — see note above volumeMount removal.
+      # NOTE: init container clear-keeper-state was removed.
+      # It was wiping /data/coordination/* on every restart, destroying
+      # ClickHouse Keeper metadata and putting all tables in readonly mode.
+      # This caused Langfuse ingestion to silently drop all data.
+      # Removed 2026-04-01 — no issue needed per operator.

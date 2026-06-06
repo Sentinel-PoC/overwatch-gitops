@@ -1,0 +1,144 @@
+---
+# SEC-117: Add disallow-latest-tag ClusterPolicy (Audit mode).
+# Resolves the dangling reference in apps/mesh-config/kyverno-istio-exception.yaml
+# (policyName: disallow-latest-tag, ruleNames: [no-latest-tag]) — Kyverno emits
+# warnings for PolicyExceptions that reference a non-existent policy.
+#
+# Deployed in Audit mode to surface :latest / tag-free image usage without
+# blocking admission. Enforce flip is a follow-up (SEC-118) pending audit clean-up.
+# Maps to NIST 800-53 SI-7 (software and information integrity).
+#
+# Rule name 'no-latest-tag' is required to match the existing PolicyException
+# kyverno/istio-sidecar-exception (exceptions[].ruleNames[]: no-latest-tag).
+# Do NOT rename without also updating kyverno-istio-exception.yaml.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Images must reference a specific, immutable tag or digest.
+      Using ':latest' or omitting the tag entirely is disallowed because
+      the resolved image can change silently, breaking reproducibility and
+      violating supply-chain integrity requirements (SI-7, CM-14).
+      Deployed in Audit mode (SEC-117). Enforce flip deferred to SEC-118
+      pending audit results. System namespaces (kube-*, openshift-*) excluded.
+    nist-controls: SI-7, CM-14
+spec:
+  # OPS-1182 (2026-06-05) Phase 3: flipped Audit->Enforce. Only genuine new-admission
+  # offender cluster-wide was kiali's ubi-minimal:latest init (manual-deploy addon) —
+  # exempted via kiali-latest-tag-exception. Backup CronJobs digest-pinned; plane-minio-bucket
+  # renders a digest; stale Job snapshots grandfathered (allowExistingViolations:true).
+  validationFailureAction: Enforce
+  failurePolicy: Ignore
+  background: true
+  webhookTimeoutSeconds: 10
+  rules:
+    - name: no-latest-tag
+      # SEC-117: deny Pods whose containers reference ':latest' or a bare
+      # image with no tag and no digest. This complements require-image-digest
+      # (SEC-102) which requires @sha256: notation; this policy catches the
+      # specific anti-pattern of ':latest' before the digest enforcement path.
+      # PolicyException kyverno/istio-sidecar-exception carves out istio-proxy
+      # and istio-init containers — the Istio sidecar images use ':latest' at
+      # inject-time before cosign attestation. That exception is already live.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - openshift
+                - openshift-apiserver
+                - openshift-apiserver-operator
+                - openshift-authentication
+                - openshift-authentication-operator
+                - openshift-cloud-controller-manager
+                - openshift-cloud-controller-manager-operator
+                - openshift-cloud-credential-operator
+                - openshift-cluster-csi-drivers
+                - openshift-cluster-machine-approver
+                - openshift-cluster-node-tuning-operator
+                - openshift-cluster-samples-operator
+                - openshift-cluster-storage-operator
+                - openshift-cluster-version
+                - openshift-config
+                - openshift-config-managed
+                - openshift-config-operator
+                - openshift-console
+                - openshift-console-operator
+                - openshift-console-user-settings
+                - openshift-controller-manager
+                - openshift-controller-manager-operator
+                - openshift-dns
+                - openshift-dns-operator
+                - openshift-etcd
+                - openshift-etcd-operator
+                - openshift-gitops
+                - openshift-image-registry
+                - openshift-infra
+                - openshift-ingress
+                - openshift-ingress-canary
+                - openshift-ingress-operator
+                - openshift-insights
+                - openshift-kube-apiserver
+                - openshift-kube-apiserver-operator
+                - openshift-kube-controller-manager
+                - openshift-kube-controller-manager-operator
+                - openshift-kube-scheduler
+                - openshift-kube-scheduler-operator
+                - openshift-kube-storage-version-migrator
+                - openshift-kube-storage-version-migrator-operator
+                - openshift-machine-api
+                - openshift-machine-config-operator
+                - openshift-marketplace
+                - openshift-monitoring
+                - openshift-multus
+                - openshift-network-diagnostics
+                - openshift-network-operator
+                - openshift-node
+                - openshift-oauth-apiserver
+                - openshift-openstack-infra
+                - openshift-operator-lifecycle-manager
+                - openshift-operators
+                - openshift-ovirt-infra
+                - openshift-route-controller-manager
+                - openshift-sdn
+                - openshift-service-ca
+                - openshift-service-ca-operator
+                - openshift-user-workload-monitoring
+                - openshift-vsphere-infra
+      validate:
+        message: >-
+          Images must use a specific tag (not ':latest') or an immutable digest.
+          Replace ':latest' with a version tag or @sha256: digest. SEC-117.
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"
+                  - key: "{{ regex_match('^[^:@]+$', '{{ element.image }}')}}"
+                    operator: Equals
+                    value: "true"
+          - list: "request.object.spec.initContainers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"
+                  - key: "{{ regex_match('^[^:@]+$', '{{ element.image }}')}}"
+                    operator: Equals
+                    value: "true"

@@ -1,0 +1,106 @@
+# Kiali is installed via Helm directly (not managed by ArgoCD)
+# due to OpenShift GitOps namespace-scoped limitation with ClusterRoles.
+#
+# [OPS-1045] Kiali upgraded from v2.25.0 to v2.26.1 to remediate:
+#   CVE-2026-33186 — gRPC-Go HTTP/2 authz bypass (grpc v1.79.3, was v1.66.2)
+#   CVE-2025-68121 — crypto/tls session resumption (go1.25.9, was go1.23.x)
+# Harbor image sentinel/kiali:v2.26.1 mirrored and cosign-signed 2026-05-31.
+# Harbor digest: sha256:5df5c007a0c17a33d4498e5a3f3284bdf2457374ff2def6c1b5e9f3570474e8e
+# Helm chart kiali-server 2.26.0 is used (v2.26.1 chart does not exist upstream;
+# chart 2.26.0 appVersion=v2.26.0 is overridden to v2.26.1 via --set flags below).
+#
+# !! OPERATOR ACTION REQUIRED — deploy is MANUAL (NOT ArgoCD-synced) !!
+# Run on iac-control after merging PRs OPS-1045-a and OPS-1045-b:
+#
+# helm repo add kiali https://kiali.org/helm-charts --force-update
+# helm repo update kiali
+# helm upgrade kiali kiali/kiali-server --version 2.26.0 --namespace istio-system \
+#   --set deployment.image_name=harbor.208.haist.farm/sentinel/kiali \
+#   --set deployment.image_version=v2.26.1 \
+#   --set auth.strategy=anonymous \
+#   --set external_services.istio.root_namespace=istio-system \
+#   --set external_services.prometheus.url="https://thanos-querier.openshift-monitoring.svc.cluster.local:9091" \
+#   --set external_services.prometheus.auth.type=bearer \
+#   --set external_services.prometheus.auth.use_kiali_token=true \
+#   --set external_services.tracing.enabled=true \
+#   --set external_services.tracing.provider=jaeger \
+#   --set external_services.tracing.in_cluster_url="http://jaeger-query.observability.svc.cluster.local:16686" \
+#   --set external_services.tracing.use_grpc=false \
+#   --set external_services.grafana.enabled=true \
+#   --set external_services.grafana.in_cluster_url="http://grafana.monitoring.svc.cluster.local:80" \
+#   --set external_services.grafana.url="https://grafana.208.haist.farm" \
+#   --set server.web_root=/kiali \
+#   --set server.web_schema=https
+#
+# OKD Route auto-created by Helm chart at:
+#   kiali-istio-system.apps.overwatch.haist.farm
+#
+# ArgoCD Application below is kept as reference but NOT applied:
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kiali-reference
+  namespace: openshift-gitops
+  annotations:
+    sentinel.haist.farm/managed-by: helm
+    sentinel.haist.farm/note: >-
+      Reference only. Kiali is Helm-managed due to OKD ClusterRole constraints.
+spec:
+  project: default
+  source:
+    repoURL: https://kiali.org/helm-charts
+    chart: kiali-server
+    targetRevision: 2.26.0
+    helm:
+      releaseName: kiali
+      valuesObject:
+        deployment:
+          accessible_namespaces:
+            - "**"
+          image_name: harbor.208.haist.farm/sentinel/kiali
+          image_version: v2.26.1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          replicas: 1
+          view_only_mode: false
+        auth:
+          strategy: anonymous
+        external_services:
+          istio:
+            root_namespace: istio-system
+            component_status:
+              enabled: true
+            config_map_name: istio
+            istiod_deployment_name: istiod
+          prometheus:
+            url: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
+            auth:
+              type: bearer
+              use_kiali_token: true
+          tracing:
+            enabled: true
+            provider: jaeger
+            in_cluster_url: "http://jaeger-query.observability.svc.cluster.local:16686"
+            use_grpc: false
+          grafana:
+            enabled: true
+            in_cluster_url: "http://grafana.monitoring.svc.cluster.local:80"
+            url: "https://grafana.208.haist.farm"
+        server:
+          web_root: /kiali
+          web_schema: https
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

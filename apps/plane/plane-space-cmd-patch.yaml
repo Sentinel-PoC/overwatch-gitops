@@ -1,0 +1,61 @@
+---
+# OPS-455: Durable CMD patch for plane-space-wl
+#
+# Harbor-mirrored plane-space:v0.24.0 has ENTRYPOINT=docker-entrypoint.sh
+# and CMD=["node"] (bare, no script arg). The Next.js spaces server requires
+# CMD=["node","space/server.js"] to start. Helm chart plane-ce 1.4.1 does not
+# template command/args — it relies on image CMD entirely.
+#
+# Applied via ServerSideApply (separate field manager from Helm). Helm owns
+# all other Deployment fields; this manifest owns only command + args.
+#
+# Script path verified: oc exec plane-space-wl-* -- ls /app/space/ → server.js present.
+#
+# PLANE-RECOVERY SSA fix: ServerSideApply=true,Validate=false so ArgoCD skips
+# K8s API validation (which requires containers[0].image on a full Deployment
+# spec). Without Validate=false, ArgoCD rejects this partial manifest with
+# "spec.template.spec.containers[0].image: Required value" even though SSA
+# only needs the fields being patched. IgnoreExtraneous suppresses the
+# RepeatedResourceWarning from this manifest appearing alongside the
+# Helm-rendered copy of the same Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-space-wl
+  namespace: plane
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    backstage.io/component: plane
+spec:
+  selector:
+    matchLabels:
+      app.name: plane-plane-space
+  template:
+    metadata:
+      labels:
+        app.name: plane-plane-space
+        app.kubernetes.io/name: plane-space
+    spec:
+      # OPS-767: enforce non-root execution.
+      # node:18-alpine image contains node user uid=1000 (confirmed via oc exec on peer images).
+      # Next.js standalone server reads /app at runtime only — no writes needed.
+      # Port 3000 is non-privileged; no capability escalation required.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: plane-space
+        # Required field so K8s API accepts the manifest as a valid Deployment.
+        # Must match the Helm-rendered image so SSA field-merge sees identical
+        # values from both Helm field-manager and this manifest's field-manager.
+        image: harbor.208.haist.farm/sentinel/plane-space@sha256:b228b2770fc61aec353a57f180f8385fe09b5bf6f2d32c77c71b080a78792aee
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        command:
+        - node
+        args:
+        - space/server.js

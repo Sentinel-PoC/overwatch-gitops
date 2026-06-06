@@ -1,0 +1,179 @@
+---
+# OPS-316: Scheduled base-image rebuild + CVE-delta alert pipeline.
+#
+# Triggered weekly (Sun 04:00 UTC) and via workflow_dispatch to pick up
+# upstream base-image security patches without requiring a source push.
+#
+# Build uses --no-cache so the base image layer is always pulled fresh from
+# the registry. The existing build-sentinel-ops.yml push-triggered workflow
+# is unchanged; this workflow adds a parallel scheduled rebuild path.
+#
+# Tagging scheme (per OPS-316 acceptance criteria):
+#   :v3-rebuild-YYYYMMDD  — date-suffixed, accumulates in Harbor for forensics
+#   :v3-latest-rebuild    — mutable pointer, always points at the most recent rebuild
+#
+# CVE-delta detection:
+#   Trivy scans the freshly-built image for HIGH+CRITICAL findings.
+#   The count is saved to a runner-local baseline file
+#   (/var/lib/forgejo-runner/cve-baselines/sentinel-ops.txt) which persists
+#   between runs on the same runner host. On the first run the baseline is 0.
+#   If delta > 0 (new CVEs introduced), a Plane issue is opened in project SEC.
+#   Requires Forgejo repository secrets: PLANE_API_KEY
+#
+#   Note: Forgejo 11.0.10 does not expose a /actions/artifacts REST endpoint,
+#   so artifact-based prior-run comparison is not feasible. Runner-local
+#   baseline file is the reliable alternative given a persistent runner.
+#
+# Does NOT update the GitOps deployment manifest (AC-5: operator-gated promotion).
+#
+# Runner: iac  (same runner as build-sentinel-ops.yml)
+# Repo: sentinel-admin/overwatch-gitops
+# Image: harbor.208.haist.farm/sentinel/sentinel-ops
+
+name: Scheduled base-image rebuild (sentinel-ops)
+
+on:
+  schedule:
+    # Sun 04:00 UTC weekly
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+env:
+  HARBOR_REGISTRY: harbor.208.haist.farm
+  IMAGE_NAME: sentinel/sentinel-ops
+  # Must match the semver tag used in build-sentinel-ops.yml
+  IMAGE_TAG: v3
+  # Runner-local baseline file for CVE-delta comparison
+  CVE_BASELINE_DIR: /var/lib/forgejo-runner/cve-baselines
+  CVE_BASELINE_FILE: /var/lib/forgejo-runner/cve-baselines/sentinel-ops.txt
+  PLANE_API_URL: https://plane.208.haist.farm/api/v1
+  PLANE_WORKSPACE: haists-it-consulting
+  # SEC project ID
+  PLANE_PROJECT_ID: c19f95cf-9f25-40d0-a996-f7142c3e3410
+
+jobs:
+  rebuild-and-scan:
+    runs-on: iac-buildah  # [OPS-1104] Pin to buildah-capable runner; avoids pve4-2 dispatch race
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set rebuild date tag
+        run: |
+          REBUILD_DATE="$(date -u +%Y%m%d)"
+          REBUILD_TAG="${IMAGE_TAG}-rebuild-${REBUILD_DATE}"
+          LATEST_REBUILD_TAG="${IMAGE_TAG}-latest-rebuild"
+          echo "REBUILD_TAG=${REBUILD_TAG}" >> $GITHUB_ENV
+          echo "LATEST_REBUILD_TAG=${LATEST_REBUILD_TAG}" >> $GITHUB_ENV
+          echo "Rebuild date: ${REBUILD_DATE}"
+          echo "Rebuild tag: ${REBUILD_TAG}"
+
+      - name: Build container image (no-cache)
+        run: |
+          echo "Building $HARBOR_REGISTRY/$IMAGE_NAME:$REBUILD_TAG (--no-cache)"
+          buildah bud \
+            --no-cache \
+            --file apps/sentinel-ops/build/Dockerfile \
+            -t "$HARBOR_REGISTRY/$IMAGE_NAME:$REBUILD_TAG" \
+            apps/sentinel-ops/build/
+          # Also tag as latest-rebuild (mutable)
+          buildah tag \
+            "$HARBOR_REGISTRY/$IMAGE_NAME:$REBUILD_TAG" \
+            "$HARBOR_REGISTRY/$IMAGE_NAME:$LATEST_REBUILD_TAG"
+
+      - name: Push to Harbor
+        id: push
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          buildah login --username "$HARBOR_USERNAME" --password "$HARBOR_PASSWORD" "$HARBOR_REGISTRY"
+          buildah push --digestfile /tmp/digest.txt "$HARBOR_REGISTRY/$IMAGE_NAME:$REBUILD_TAG"
+          DIGEST="$(cat /tmp/digest.txt)"
+          echo "Pushed: $HARBOR_REGISTRY/$IMAGE_NAME:$REBUILD_TAG"
+          echo "Digest: $DIGEST"
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          # Push mutable latest-rebuild tag
+          buildah push "$HARBOR_REGISTRY/$IMAGE_NAME:$LATEST_REBUILD_TAG"
+          echo "Pushed mutable tag: $HARBOR_REGISTRY/$IMAGE_NAME:$LATEST_REBUILD_TAG"
+
+      - name: Trivy scan — HIGH+CRITICAL count
+        id: trivy
+        run: |
+          set -euo pipefail
+          REPORT_JSON=/tmp/trivy-report.json
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output "$REPORT_JSON" \
+            "$HARBOR_REGISTRY/$IMAGE_NAME:$REBUILD_TAG" || true
+
+          if [ -f "$REPORT_JSON" ]; then
+            CVE_COUNT=$(python3 -c "import json; data=json.load(open('$REPORT_JSON')); print(sum(len(r.get('Vulnerabilities') or []) for r in data.get('Results', [])))" 2>/dev/null || echo "0")
+          else
+            CVE_COUNT=0
+          fi
+
+          echo "CVE_COUNT=${CVE_COUNT}" >> $GITHUB_ENV
+          echo "cve_count=${CVE_COUNT}" >> $GITHUB_OUTPUT
+          echo "${CVE_COUNT}" > trivy-cve-count.txt
+          echo "HIGH+CRITICAL count: ${CVE_COUNT}"
+
+      - name: Upload Trivy CVE count artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-cve-count-sentinel-ops
+          path: trivy-cve-count.txt
+          retention-days: 60
+
+      - name: Compute CVE delta and alert
+        env:
+          PLANE_API_KEY: ${{ secrets.PLANE_API_KEY }}
+        run: |
+          set -euo pipefail
+          CURRENT_COUNT="${CVE_COUNT}"
+
+          # Read prior count from runner-local baseline (persists across runs)
+          mkdir -p "${CVE_BASELINE_DIR}"
+          if [ -f "${CVE_BASELINE_FILE}" ]; then
+            PRIOR_COUNT=$(cat "${CVE_BASELINE_FILE}" | tr -d '[:space:]')
+            echo "Prior CVE count (runner baseline): ${PRIOR_COUNT}"
+          else
+            PRIOR_COUNT=0
+            echo "No prior baseline found — first run, treating prior as 0"
+          fi
+
+          # Update baseline for next run
+          echo "${CURRENT_COUNT}" > "${CVE_BASELINE_FILE}"
+          echo "Baseline updated: ${CURRENT_COUNT}"
+
+          DELTA=$(( CURRENT_COUNT - PRIOR_COUNT ))
+          echo "Prior CVE count: ${PRIOR_COUNT}"
+          echo "Current CVE count: ${CURRENT_COUNT}"
+          echo "Delta: ${DELTA}"
+
+          if [ "${DELTA}" -le 0 ]; then
+            echo "No CVE increase detected. No Plane issue needed."
+            exit 0
+          fi
+
+          echo "CVE delta > 0 (${DELTA} new HIGH+CRITICAL). Opening Plane SEC issue..."
+
+          ISSUE_BODY=$(printf '{"name":"CVE-delta alert: sentinel-ops rebuild %s (+%s HIGH/CRITICAL)","description_html":"<p>Automated alert from OPS-316 scheduled rebuild pipeline.</p><p><strong>Repo:</strong> sentinel-admin/overwatch-gitops</p><p><strong>Image:</strong> harbor.208.haist.farm/sentinel/sentinel-ops</p><p><strong>Rebuild tag:</strong> %s</p><p><strong>Prior HIGH+CRITICAL count:</strong> %s</p><p><strong>Current HIGH+CRITICAL count:</strong> %s</p><p><strong>Delta:</strong> +%s</p><p>Review Trivy artifact in Forgejo Actions run for details. Consider base-image update or CVE suppression with justification.</p>","priority":"high"}' \
+            "${REBUILD_TAG}" "${DELTA}" "${REBUILD_TAG}" "${PRIOR_COUNT}" "${CURRENT_COUNT}" "${DELTA}")
+
+          HTTP_STATUS=$(curl -s -o /tmp/plane-response.json -w '%{http_code}' \
+            --request POST \
+            --header "x-api-key: ${PLANE_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "${ISSUE_BODY}" \
+            "${PLANE_API_URL}/workspaces/${PLANE_WORKSPACE}/projects/${PLANE_PROJECT_ID}/issues/")
+
+          if [ "${HTTP_STATUS}" = "200" ] || [ "${HTTP_STATUS}" = "201" ]; then
+            ISSUE_SEQ=$(python3 -c "import json; d=json.load(open('/tmp/plane-response.json')); print(d.get('sequence_id','?'))" 2>/dev/null || echo "?")
+            echo "Plane SEC issue created: SEC-${ISSUE_SEQ} (HTTP ${HTTP_STATUS})"
+          else
+            echo "::warning::Failed to create Plane issue (HTTP ${HTTP_STATUS})"
+            cat /tmp/plane-response.json || true
+            # Non-fatal: don't block the pipeline on issue-creation failure
+          fi

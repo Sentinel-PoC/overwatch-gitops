@@ -1,0 +1,48 @@
+# OPS-1076: MachineConfig 99-master-registries-permissive — unified registries.conf.
+#
+# WHY THIS MC MUST CONTAIN THE MIRROR STANZA:
+# MCO merges MachineConfigs with the same target file (/etc/containers/registries.conf)
+# alphabetically by MC name, with the LAST file winning. Both this MC and
+# 99-master-generated-registries (which MCO renders from IDMS/ITMS) write to
+# /etc/containers/registries.conf. Since "99-master-registries-permissive" sorts AFTER
+# "99-master-generated-registries", this MC overwrites the mirror config the IDMS/ITMS
+# generated, leaving nodes with no mirror redirect — the root cause found in OPS-1076.
+#
+# FIX: Carry BOTH the permissive settings (unqualified-search-registries + short-name-mode)
+# AND the exact mirror stanza MCO generated from the IDMS/ITMS. This MC sorts last and
+# wins, so it must be the authoritative, complete registries.conf — no content can be
+# delegated to 99-master-generated-registries for it to take effect on nodes.
+#
+# This brings the previously-imperative MC under GitOps management. ArgoCD
+# (machineconfigs app, ServerSideApply) will adopt and update the live MC on sync.
+# Merging triggers MCO to render a new MachineConfig and roll out node-by-node
+# (maxUnavailable=1 per pool) — operator-gated per HARD STOP in OPS-1076.
+#
+# IDMS + ITMS from PR #407 remain as declarative intent and drive 99-master-generated-registries.
+# They are harmless in steady state and would become the authoritative mirror config
+# if this MC were ever removed.
+#
+# file content = base64 of:
+#   unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
+#   short-name-mode = "permissive"
+#   [[registry]] prefix="" location="harbor.208.haist.farm/sentinel"
+#     [[registry.mirror]] location="mirror.208.haist.farm:8443/sentinel" pull-from-mirror="digest-only"
+#     [[registry.mirror]] location="mirror.208.haist.farm:8443/sentinel" pull-from-mirror="tag-only"
+---
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 99-master-registries-permissive
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - contents:
+            source: "data:text/plain;charset=utf-8;base64,dW5xdWFsaWZpZWQtc2VhcmNoLXJlZ2lzdHJpZXMgPSBbInJlZ2lzdHJ5LmFjY2Vzcy5yZWRoYXQuY29tIiwgImRvY2tlci5pbyJdCnNob3J0LW5hbWUtbW9kZSA9ICJwZXJtaXNzaXZlIgoKW1tyZWdpc3RyeV1dCiAgcHJlZml4ID0gIiIKICBsb2NhdGlvbiA9ICJoYXJib3IuMjA4LmhhaXN0LmZhcm0vc2VudGluZWwiCgogIFtbcmVnaXN0cnkubWlycm9yXV0KICAgIGxvY2F0aW9uID0gIm1pcnJvci4yMDguaGFpc3QuZmFybTo4NDQzL3NlbnRpbmVsIgogICAgcHVsbC1mcm9tLW1pcnJvciA9ICJkaWdlc3Qtb25seSIKCiAgW1tyZWdpc3RyeS5taXJyb3JdXQogICAgbG9jYXRpb24gPSAibWlycm9yLjIwOC5oYWlzdC5mYXJtOjg0NDMvc2VudGluZWwiCiAgICBwdWxsLWZyb20tbWlycm9yID0gInRhZy1vbmx5Igo="
+          mode: 420
+          overwrite: true
+          path: /etc/containers/registries.conf

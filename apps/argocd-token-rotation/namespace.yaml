@@ -1,0 +1,102 @@
+# OPS-1005: ArgoCD token rotation CronJob namespace.
+# Updated from OPS-1003: Vault auth changed from period-token to AppRole.
+#
+# Systemic fix for the OPS-983 / OPS-1000 class of bug: ArgoCD API tokens
+# silently expiring after the default 90-day TTL. Three accounts are in scope:
+#   admin             → secret/mcp.argocd_api_token           (MCP service)
+#   overwatch-console → secret/overwatch-console.argocd_api_token
+#   backstage         → secret/backstage.argocd_token
+#
+# Current state (2026-05-27): all three tokens were regenerated with
+# expiresIn=0 → no exp claim in JWT (ArgoCD v3.1.11 honours expiresIn=0).
+# This CronJob is a safety net: rotates all tokens on a monthly schedule
+# regardless, preventing silent-stale credentials from any future incident.
+#
+# Why AppRole instead of a period token (OPS-1005)?
+#   Platform Vault has max_ttl=768h (~32 days). A period token capped at 768h
+#   must be renewed manually every ~32 days — reintroducing the silent-expiry
+#   class-of-bug OPS-1003 was designed to prevent. AppRole auth has no TTL cap:
+#   role_id is permanent; secret_id_ttl=0 means it never expires; each CronJob
+#   run authenticates fresh and receives a short-lived token (TTL=10m, max=15m)
+#   used only for that run. Nothing long-lived to rotate or renew.
+#
+# ────────────────────────────────────────────────────────────────────────────
+# OPERATOR PRE-REQUISITE — complete before first ArgoCD sync of this app
+# ────────────────────────────────────────────────────────────────────────────
+#
+# 1. Create Vault policy argocd-token-rotation (minimal rights):
+#
+#    vault policy write argocd-token-rotation - <<'EOF'
+#    # Read-only on the rotation credential bundle itself
+#    path "secret/data/argocd-token-rotation" {
+#      capabilities = ["read"]
+#    }
+#    # Patch-only on the three token paths (updates one field, leaves others)
+#    path "secret/data/mcp" {
+#      capabilities = ["read", "patch"]
+#    }
+#    path "secret/data/overwatch-console" {
+#      capabilities = ["read", "patch"]
+#    }
+#    path "secret/data/backstage" {
+#      capabilities = ["read", "patch"]
+#    }
+#    EOF
+#
+# 2. Create Vault AppRole for argocd-token-rotation:
+#    (AppRole auth must be enabled: vault auth enable approle)
+#
+#    vault write auth/approle/role/argocd-token-rotation \
+#      token_policies=argocd-token-rotation \
+#      token_ttl=10m \
+#      token_max_ttl=15m \
+#      secret_id_ttl=0 \
+#      secret_id_num_uses=0 \
+#      bind_secret_id=true
+#
+# 3. Get role_id and generate a secret_id:
+#
+#    ROLE_ID=$(vault read -field=role_id \
+#      auth/approle/role/argocd-token-rotation/role-id)
+#
+#    SECRET_ID=$(vault write -force -field=secret_id \
+#      auth/approle/role/argocd-token-rotation/secret-id)
+#
+# 4. Retrieve the current ArgoCD admin password and store everything in Vault:
+#
+#    ARGOCD_ADMIN_PASS=$(oc get secret openshift-gitops-cluster \
+#      -n openshift-gitops \
+#      -o jsonpath='{.data.admin\.password}' | base64 -d)
+#
+#    vault kv put secret/argocd-token-rotation \
+#      argocd_admin_password="$ARGOCD_ADMIN_PASS" \
+#      role_id="$ROLE_ID" \
+#      secret_id="$SECRET_ID"
+#
+# 5. Sync the argocd-token-rotation ArgoCD Application:
+#
+#    argocd app sync argocd-token-rotation
+#    argocd app wait argocd-token-rotation --health
+#
+# NOTE: If the ArgoCD admin password ever changes (e.g., emergency reset),
+# repeat step 4 to update Vault. The CronJob will pick up the new value
+# within ESO's refreshInterval (1 hour).
+#
+# NOTE: role_id is stable (permanent property of the AppRole). If secret_id
+# needs rotation (e.g., suspected compromise), generate a new one:
+#
+#    NEW_SECRET_ID=$(vault write -force -field=secret_id \
+#      auth/approle/role/argocd-token-rotation/secret-id)
+#    vault kv patch secret/argocd-token-rotation secret_id="$NEW_SECRET_ID"
+#
+# FOLLOW-UP: OPS-1003 also tracks a sentinel-iac PR to add the Vault policy
+# and AppRole config via Ansible (idempotent) rather than the manual CLI steps
+# above.
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd-token-rotation
+  labels:
+    app.kubernetes.io/part-of: argocd-token-rotation
+    ops.overwatch/issue: OPS-1005

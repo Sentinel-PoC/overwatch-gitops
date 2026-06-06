@@ -1,0 +1,61 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  annotations:
+    policies.kyverno.io/title: Disallow Privileged Containers
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    nist-controls: CM-7, SI-7
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: deny-privileged
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - backstage
+                - defectdojo
+                - demo
+                - harbor
+                - haists-website
+                - homepage
+                - keycloak
+                - kyverno        # SEC-111: added; kyverno pods run non-privileged
+                - logging        # SEC-111: added; alloy/victorialogs run non-privileged
+                - matrix
+                - media
+                - monitoring
+                - netbox
+                - nfs-provisioner
+                - overwatch-console
+                - plane
+                - scanopy        # SEC-111: added; daemon is now non-privileged (SEC-112)
+                - sentinel-ops
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - pangolin-internal
+      validate:
+        message: Privileged containers are not allowed.
+        foreach:
+          - list: "request.object.spec.[initContainers, containers][]"
+            preconditions:
+              all:
+                - key: "{{ element.name }}"
+                  operator: NotIn
+                  value:
+                    - istio-init
+                    - istio-proxy
+                    - istio-validation
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.securityContext.privileged || false }}"
+                    operator: Equals
+                    value: true

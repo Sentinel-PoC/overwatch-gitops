@@ -1,0 +1,28 @@
+# OPS-1076: ImageDigestMirrorSet — sentinel harbor → off-cluster mirror failover.
+#
+# Enables pods pulling harbor.208.haist.farm/sentinel images by DIGEST to automatically
+# try the off-cluster mirror at mirror.208.haist.farm:8443/sentinel before falling back
+# to Harbor. This ensures image pulls succeed even when Harbor (co-located on cluster)
+# is unavailable — prerequisite for SEC-104 fail-closed supply-chain admission.
+#
+# mirrorSourcePolicy: AllowContactingSource — if the mirror is unreachable, fall back
+# to Harbor (source). Use NeverContactSource only after the fail-closed flip (SEC-104).
+#
+# NOT ArgoCD-managed: config.openshift.io/ImageDigestMirrorSet is absent from the
+# AppProject default clusterResourceWhitelist. Pattern follows
+# clusters/overwatch/machineconfigs/master-kubelet-autosize-reserved.yaml.
+# MCO picks up IDMS changes and triggers a rolling node reboot (maxUnavailable=1 per pool).
+#
+# Apply:    oc apply -f clusters/overwatch/system/image-mirror/image-digest-mirror-set.yaml
+# Rollback: oc delete imagedigestmirrorset sentinel-harbor-mirror
+---
+apiVersion: config.openshift.io/v1
+kind: ImageDigestMirrorSet
+metadata:
+  name: sentinel-harbor-mirror
+spec:
+  imageDigestMirrors:
+    - source: harbor.208.haist.farm/sentinel
+      mirrors:
+        - mirror.208.haist.farm:8443/sentinel
+      mirrorSourcePolicy: AllowContactingSource

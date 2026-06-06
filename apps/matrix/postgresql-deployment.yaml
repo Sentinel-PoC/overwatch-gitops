@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matrix-postgresql
+  namespace: matrix
+  labels:
+    app: matrix-postgresql
+  annotations:
+    backstage.io/component: matrix-postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matrix-postgresql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: matrix-postgresql
+        app.kubernetes.io/name: postgresql
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      terminationGracePeriodSeconds: 120
+      serviceAccountName: matrix-sa
+      containers:
+        - name: postgresql
+          image: harbor.208.haist.farm/sentinel/postgres@sha256:a513e5eb5d31612c5c29565e403ba72861b0da184a8676eb5f2bbc0caae3d8ff
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-postgresql-credentials
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-postgresql-credentials
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: matrix-postgresql-credentials
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: "md5"
+          volumeMounts:
+            - name: postgresql-data
+              mountPath: /var/lib/postgresql/data
+          args:
+            - "postgres"
+            - "-c"
+            - "shared_buffers=256MB"
+            - "-c"
+            - "work_mem=8MB"
+            - "-c"
+            - "effective_cache_size=384MB"
+            - "-c"
+            - "random_page_cost=1.1"
+            - "-c"
+            - "max_connections=100"
+            - "-c"
+            - "checkpoint_completion_target=0.9"
+            - "-c"
+            - "wal_buffers=16MB"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - su-exec postgres pg_ctl stop -m fast -D /var/lib/postgresql/data/pgdata -w -t 90
+          startupProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 240
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: postgresql-data
+          persistentVolumeClaim:
+            claimName: matrix-postgresql-data

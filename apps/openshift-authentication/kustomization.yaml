@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# OPS-605 Phase 3: OKD oauth-openshift Authentik IDP (additive alongside Keycloak)
+# Activation blocked by OPS-629 (Pangolin OIDC 404).
+# AppProject whitelist must be updated before ArgoCD app activation.
+resources:
+  - external-secret.yaml
+  - oauth-cluster.yaml

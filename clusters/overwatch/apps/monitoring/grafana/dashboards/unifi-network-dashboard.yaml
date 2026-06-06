@@ -1,0 +1,88 @@
+apiVersion: v1
+data:
+  unifi-network.json: "{\n  \"annotations\": {\n    \"list\": [\n      {\n        \"builtIn\": 1,\n        \"datasource\": {\n          \"type\": \"grafana\",\n          \"uid\": \"-- Grafana --\"\n   \
+    \     },\n        \"enable\": true,\n        \"hide\": true,\n        \"iconColor\": \"rgba(0, 211, 255, 1)\",\n        \"name\": \"Annotations & Alerts\",\n        \"type\": \"dashboard\"\n      }\n\
+    \    ]\n  },\n  \"editable\": true,\n  \"fiscalYearStartMonth\": 0,\n  \"graphTooltip\": 1,\n  \"id\": null,\n  \"links\": [],\n  \"panels\": [\n    {\n      \"id\": 1,\n      \"title\": \"Devices Online\"\
+    ,\n      \"type\": \"stat\",\n      \"gridPos\": {\n        \"h\": 4,\n        \"w\": 4,\n        \"x\": 0,\n        \"y\": 0\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n\
+    \        \"uid\": \"P660CC246A1C19F5F\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"unifi_devices_total{state=\\\"online\\\"}\",\n          \"legendFormat\": \"Online\",\n     \
+    \     \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n         \
+    \     {\n                \"color\": \"red\",\n                \"value\": null\n              },\n              {\n                \"color\": \"yellow\",\n                \"value\": 1\n             \
+    \ },\n              {\n                \"color\": \"green\",\n                \"value\": 3\n              }\n            ]\n          },\n          \"color\": {\n            \"mode\": \"thresholds\"\
+    \n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\n          ],\n          \"fields\"\
+    : \"\",\n          \"values\": false\n        },\n        \"orientation\": \"auto\",\n        \"textMode\": \"auto\",\n        \"colorMode\": \"background\",\n        \"graphMode\": \"none\"\n     \
+    \ }\n    },\n    {\n      \"id\": 2,\n      \"title\": \"Total Clients\",\n      \"type\": \"stat\",\n      \"gridPos\": {\n        \"h\": 4,\n        \"w\": 4,\n        \"x\": 4,\n        \"y\": 0\n\
+    \      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"P660CC246A1C19F5F\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"unifi_clients_total\",\n\
+    \          \"legendFormat\": \"Clients\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"thresholds\": {\n            \"mode\": \"absolute\"\
+    ,\n            \"steps\": [\n              {\n                \"color\": \"blue\",\n                \"value\": null\n              }\n            ]\n          },\n          \"color\": {\n          \
+    \  \"mode\": \"thresholds\"\n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\n \
+    \         ],\n          \"fields\": \"\",\n          \"values\": false\n        },\n        \"orientation\": \"auto\",\n        \"textMode\": \"auto\",\n        \"colorMode\": \"background\",\n    \
+    \    \"graphMode\": \"none\"\n      }\n    },\n    {\n      \"id\": 3,\n      \"title\": \"Total Networks\",\n      \"type\": \"stat\",\n      \"gridPos\": {\n        \"h\": 4,\n        \"w\": 4,\n\
+    \        \"x\": 8,\n        \"y\": 0\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"P660CC246A1C19F5F\"\n      },\n      \"targets\": [\n        {\n       \
+    \   \"expr\": \"unifi_networks_total\",\n          \"legendFormat\": \"Networks\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"thresholds\"\
+    : {\n            \"mode\": \"absolute\",\n            \"steps\": [\n              {\n                \"color\": \"purple\",\n                \"value\": null\n              }\n            ]\n       \
+    \   },\n          \"color\": {\n            \"mode\": \"thresholds\"\n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\"\
+    : [\n            \"lastNotNull\"\n          ],\n          \"fields\": \"\",\n          \"values\": false\n        },\n        \"orientation\": \"auto\",\n        \"textMode\": \"auto\",\n        \"\
+    colorMode\": \"background\",\n        \"graphMode\": \"none\"\n      }\n    },\n    {\n      \"id\": 4,\n      \"title\": \"WAN Throughput\",\n      \"type\": \"timeseries\",\n      \"gridPos\": {\n\
+    \        \"h\": 8,\n        \"w\": 12,\n        \"x\": 12,\n        \"y\": 0\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"P660CC246A1C19F5F\"\n      },\n\
+    \      \"targets\": [\n        {\n          \"expr\": \"unifi_wan_tx_bps\",\n          \"legendFormat\": \"TX\",\n          \"refId\": \"A\"\n        },\n        {\n          \"expr\": \"unifi_wan_rx_bps\"\
+    ,\n          \"legendFormat\": \"RX\",\n          \"refId\": \"B\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"bps\",\n          \"custom\": {\n  \
+    \          \"drawStyle\": \"line\",\n            \"lineInterpolation\": \"smooth\",\n            \"fillOpacity\": 15,\n            \"lineWidth\": 2,\n            \"pointSize\": 5,\n            \"showPoints\"\
+    : \"auto\",\n            \"spanNulls\": false,\n            \"stacking\": {\n              \"mode\": \"none\"\n            },\n            \"axisPlacement\": \"auto\",\n            \"gradientMode\"\
+    : \"scheme\"\n          },\n          \"color\": {\n            \"mode\": \"palette-classic\"\n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"tooltip\"\
+    : {\n          \"mode\": \"multi\",\n          \"sort\": \"desc\"\n        },\n        \"legend\": {\n          \"displayMode\": \"list\",\n          \"placement\": \"bottom\"\n        }\n      }\n\
+    \    },\n    {\n      \"id\": 5,\n      \"title\": \"Device List\",\n      \"type\": \"table\",\n      \"gridPos\": {\n        \"h\": 8,\n        \"w\": 12,\n        \"x\": 0,\n        \"y\": 4\n  \
+    \    },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"P660CC246A1C19F5F\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"unifi_device_cpu_pct\",\n\
+    \          \"legendFormat\": \"{{name}}\",\n          \"refId\": \"A\",\n          \"format\": \"table\",\n          \"instant\": true\n        },\n        {\n          \"expr\": \"unifi_device_memory_pct\"\
+    ,\n          \"legendFormat\": \"{{name}}\",\n          \"refId\": \"B\",\n          \"format\": \"table\",\n          \"instant\": true\n        },\n        {\n          \"expr\": \"unifi_device_uptime_seconds\"\
+    ,\n          \"legendFormat\": \"{{name}}\",\n          \"refId\": \"C\",\n          \"format\": \"table\",\n          \"instant\": true\n        }\n      ],\n      \"fieldConfig\": {\n        \"\
+    defaults\": {},\n        \"overrides\": [\n          {\n            \"matcher\": {\n              \"id\": \"byName\",\n              \"options\": \"Value #A\"\n            },\n            \"properties\"\
+    : [\n              {\n                \"id\": \"displayName\",\n                \"value\": \"CPU %\"\n              },\n              {\n                \"id\": \"unit\",\n                \"value\"\
+    : \"percent\"\n              },\n              {\n                \"id\": \"custom.displayMode\",\n                \"value\": \"color-background\"\n              },\n              {\n              \
+    \  \"id\": \"thresholds\",\n                \"value\": {\n                  \"mode\": \"absolute\",\n                  \"steps\": [\n                    {\n                      \"color\": \"green\"\
+    ,\n                      \"value\": null\n                    },\n                    {\n                      \"color\": \"yellow\",\n                      \"value\": 60\n                    },\n \
+    \                   {\n                      \"color\": \"red\",\n                      \"value\": 85\n                    }\n                  ]\n                }\n              }\n            ]\n\
+    \          },\n          {\n            \"matcher\": {\n              \"id\": \"byName\",\n              \"options\": \"Value #B\"\n            },\n            \"properties\": [\n              {\n \
+    \               \"id\": \"displayName\",\n                \"value\": \"Memory %\"\n              },\n              {\n                \"id\": \"unit\",\n                \"value\": \"percent\"\n    \
+    \          },\n              {\n                \"id\": \"custom.displayMode\",\n                \"value\": \"color-background\"\n              },\n              {\n                \"id\": \"thresholds\"\
+    ,\n                \"value\": {\n                  \"mode\": \"absolute\",\n                  \"steps\": [\n                    {\n                      \"color\": \"green\",\n                     \
+    \ \"value\": null\n                    },\n                    {\n                      \"color\": \"yellow\",\n                      \"value\": 60\n                    },\n                    {\n \
+    \                     \"color\": \"red\",\n                      \"value\": 85\n                    }\n                  ]\n                }\n              }\n            ]\n          },\n        \
+    \  {\n            \"matcher\": {\n              \"id\": \"byName\",\n              \"options\": \"Value #C\"\n            },\n            \"properties\": [\n              {\n                \"id\":\
+    \ \"displayName\",\n                \"value\": \"Uptime\"\n              },\n              {\n                \"id\": \"unit\",\n                \"value\": \"s\"\n              }\n            ]\n  \
+    \        }\n        ]\n      },\n      \"options\": {\n        \"showHeader\": true,\n        \"sortBy\": [\n          {\n            \"displayName\": \"CPU %\",\n            \"desc\": true\n      \
+    \    }\n        ]\n      },\n      \"transformations\": [\n        {\n          \"id\": \"joinByField\",\n          \"options\": {\n            \"byField\": \"name\",\n            \"mode\": \"outer\"\n          }\n        },\n        {\n          \"id\": \"organize\",\n          \"options\"\
+    : {\n            \"excludeByName\": {\n              \"Time\": true,\n              \"__name__\": true,\n              \"instance\": true,\n              \"job\": true,\n              \"model\": true,\n              \"mac\": true\n            },\n            \"\
+    renameByName\": {\n              \"name\": \"Device\"\n            }\n          }\n        }\n      ]\n    },\n    {\n      \"id\": 6,\n      \"title\": \"Client Count Over Time\",\n      \"type\"\
+    : \"timeseries\",\n      \"gridPos\": {\n        \"h\": 8,\n        \"w\": 12,\n        \"x\": 0,\n        \"y\": 12\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"\
+    uid\": \"P660CC246A1C19F5F\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"unifi_clients_total{type=\\\"wired\\\"}\",\n          \"legendFormat\": \"Wired\",\n          \"refId\"\
+    : \"A\"\n        },\n        {\n          \"expr\": \"unifi_clients_total{type=\\\"wireless\\\"}\",\n          \"legendFormat\": \"Wireless\",\n          \"refId\": \"B\"\n        }\n      ],\n    \
+    \  \"fieldConfig\": {\n        \"defaults\": {\n          \"custom\": {\n            \"drawStyle\": \"line\",\n            \"lineInterpolation\": \"smooth\",\n            \"fillOpacity\": 20,\n    \
+    \        \"lineWidth\": 2,\n            \"pointSize\": 5,\n            \"showPoints\": \"auto\",\n            \"spanNulls\": false,\n            \"stacking\": {\n              \"mode\": \"normal\"\n\
+    \            },\n            \"axisPlacement\": \"auto\",\n            \"gradientMode\": \"scheme\"\n          },\n          \"color\": {\n            \"mode\": \"palette-classic\"\n          }\n  \
+    \      },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"tooltip\": {\n          \"mode\": \"multi\",\n          \"sort\": \"desc\"\n        },\n        \"legend\": {\n      \
+    \    \"displayMode\": \"list\",\n          \"placement\": \"bottom\"\n        }\n      }\n    },\n    {\n      \"id\": 7,\n      \"title\": \"Device CPU Usage\",\n      \"type\": \"gauge\",\n      \"\
+    gridPos\": {\n        \"h\": 8,\n        \"w\": 6,\n        \"x\": 12,\n        \"y\": 12\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"P660CC246A1C19F5F\"\
+    \n      },\n      \"targets\": [\n        {\n          \"expr\": \"unifi_device_cpu_pct\",\n          \"legendFormat\": \"{{name}}\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\"\
+    : {\n        \"defaults\": {\n          \"unit\": \"percent\",\n          \"min\": 0,\n          \"max\": 100,\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\"\
+    : [\n              {\n                \"color\": \"green\",\n                \"value\": null\n              },\n              {\n                \"color\": \"yellow\",\n                \"value\": 60\n\
+    \              },\n              {\n                \"color\": \"red\",\n                \"value\": 85\n              }\n            ]\n          },\n          \"color\": {\n            \"mode\": \"\
+    thresholds\"\n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\n          ],\n  \
+    \        \"fields\": \"\",\n          \"values\": false\n        },\n        \"showThresholdLabels\": false,\n        \"showThresholdMarkers\": true,\n        \"orientation\": \"auto\"\n      }\n  \
+    \  },\n    {\n      \"id\": 8,\n      \"title\": \"Device Memory Usage\",\n      \"type\": \"gauge\",\n      \"gridPos\": {\n        \"h\": 8,\n        \"w\": 6,\n        \"x\": 18,\n        \"y\":\
+    \ 12\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"P660CC246A1C19F5F\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"unifi_device_memory_pct\"\
+    ,\n          \"legendFormat\": \"{{name}}\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"percent\",\n          \"min\"\
+    : 0,\n          \"max\": 100,\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n              {\n                \"color\": \"green\",\n                \"\
+    value\": null\n              },\n              {\n                \"color\": \"yellow\",\n                \"value\": 60\n              },\n              {\n                \"color\": \"red\",\n    \
+    \            \"value\": 85\n              }\n            ]\n          },\n          \"color\": {\n            \"mode\": \"thresholds\"\n          }\n        },\n        \"overrides\": []\n      },\n\
+    \      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\n          ],\n          \"fields\": \"\",\n          \"values\": false\n        },\n       \
+    \ \"showThresholdLabels\": false,\n        \"showThresholdMarkers\": true,\n        \"orientation\": \"auto\"\n      }\n    }\n  ],\n  \"refresh\": \"30s\",\n  \"schemaVersion\": 39,\n  \"tags\": [\n\
+    \    \"unifi\",\n    \"network\",\n    \"sentinel\"\n  ],\n  \"templating\": {\n    \"list\": []\n  },\n  \"time\": {\n    \"from\": \"now-6h\",\n    \"to\": \"now\"\n  },\n  \"timepicker\": {},\n  \"timezone\": \"browser\",\n  \"title\": \"UniFi Network Overview\",\n  \"uid\"\
+    : \"unifi-overview\",\n  \"version\": 1\n}"
+kind: ConfigMap
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+  labels:
+    grafana_dashboard: '1'
+  name: grafana-dashboard-unifi-network
+  namespace: monitoring

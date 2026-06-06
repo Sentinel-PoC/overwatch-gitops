@@ -1,0 +1,33 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: prometheus-api
+  description: Prometheus/Thanos query API for metrics retrieval
+  tags:
+    - monitoring
+    - metrics
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: Prometheus Query API
+      version: "2.x"
+      description: Thanos querier endpoint aggregating cluster and external metrics
+    servers:
+      - url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    paths:
+      /api/v1/query:
+        get:
+          summary: Instant query
+      /api/v1/query_range:
+        get:
+          summary: Range query
+      /api/v1/targets:
+        get:
+          summary: Active targets

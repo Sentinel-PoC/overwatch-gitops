@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse-redis
+  namespace: langfuse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: langfuse
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/instance: langfuse
+    spec:
+      imagePullSecrets:
+      - name: harbor-pull-secret
+      containers:
+      - name: redis
+        image: harbor.208.haist.farm/sentinel/valkey@sha256:f7b42b90aa7dc9b5c3eb672e5667f53fd98b027d6938715ff4bb2908dad5983d
+        ports:
+        - containerPort: 6379
+        # OPS-110: REDIS_PASSWORD sourced from Vault via langfuse-redis-creds ExternalSecret.
+        # Vault path: secret/langfuse/redis, key 'password'.
+        # $(REDIS_PASSWORD) shell substitution used in command + probes below.
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-redis-creds
+              key: password
+        command:
+        - sh
+        - -c
+        - redis-server --requirepass "${REDIS_PASSWORD}" --maxmemory-policy noeviction --save ''
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - redis-cli -a "${REDIS_PASSWORD}" ping
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - redis-cli -a "${REDIS_PASSWORD}" ping
+          periodSeconds: 10

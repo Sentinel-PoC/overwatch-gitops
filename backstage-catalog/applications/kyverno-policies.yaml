@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: kyverno-policies
+  description: Kyverno admission policy set — enforces security standards (no privileged containers, required labels, resource limits, Harbor pull secrets)
+  annotations:
+    backstage.io/kubernetes-namespace: kyverno
+    argocd/app-name: kyverno-policies
+  tags:
+    - security
+    - policy
+    - admission-control
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:kyverno

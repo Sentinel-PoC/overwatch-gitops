@@ -1,0 +1,94 @@
+---
+# Default deny all traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: overwatch-console
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow overwatch-console app traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-overwatch-console
+  namespace: overwatch-console
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: overwatch-console
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from Istio IngressGateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-ingress
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS resolution (CoreDNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 5353
+        - protocol: TCP
+          port: 5353
+    # Pangolin/Traefik — Proxmox, Wazuh, Vault, ArgoCD, OIDC, CrowdSec, Forgejo all via :443
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.168/32
+      ports:
+        - protocol: TCP
+          port: 443
+    # Kubernetes API (in-cluster) for OKD namespace/pod/node queries
+    - to:
+        - ipBlock:
+            cidr: 172.30.0.1/32
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# Allow Istio control plane communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-istio-control-plane
+  namespace: overwatch-console
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # Istio control plane (istiod)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15010
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 15014
+    # Istio IngressGateway health
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-ingress
+      ports:
+        - protocol: TCP
+          port: 15021

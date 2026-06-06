@@ -1,0 +1,21 @@
+---
+# media namespace — managed-by label for ArgoCD GitOps adoption.
+#
+# The harbor-pull-secrets ArgoCD Application deploys an ExternalSecret
+# (harbor-pull-secret) into the media namespace. Without the
+# argocd.argoproj.io/managed-by label, ArgoCD cannot load live state for
+# any resource in this namespace, causing Sync=Unknown:
+#   "Failed to load live state: namespace \"media\" for ExternalSecret
+#    \"harbor-pull-secret\" is not managed"
+#
+# Namespace kind is in the AppProject default clusterResourceWhitelist
+# (added OPS-884), so ArgoCD manages this manifest directly via the
+# harbor-pull-secrets Application (CreateNamespace=true + ServerSideApply=true).
+#
+# Tracking: OPS-1059 — discovered during OPS-882 namespace label sweep
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: media
+  labels:
+    argocd.argoproj.io/managed-by: openshift-gitops

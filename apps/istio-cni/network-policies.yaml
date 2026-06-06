@@ -1,0 +1,128 @@
+# OPS-750: NetworkPolicy default-deny baseline for istio-cni namespace.
+# Child issue of OPS-747 (deferred from OPS-517 Phase 1b, 2026-05-18).
+#
+# CORRECTION (2026-05-20, Judge verification):
+# Initial PR assumed hostNetwork: true — WRONG. Judge confirmed live:
+#   kubectl get ds -n istio-cni -o jsonpath='{.items[0].spec.template.spec.hostNetwork}'
+#   → false
+# Pod IPs are on the pod network (10.128/10.129/10.130 range), NOT the host
+# network. OVN-K therefore DOES enforce NetworkPolicy for these pods.
+# Default-deny-all without explicit allow rules WOULD have broken cluster
+# networking. This revision adds three mandatory egress rules.
+#
+# istio-cni-node DaemonSet egress requirements:
+#   - kube-API (6443) on node IPs 10.0.0.0/24 — CNI watches pods/namespaces
+#   - istiod in istio-system (15012) — CNI agent syncs mesh config via xDS
+#   - kubelet on node IPs 10.0.0.0/24 (10250) — CNI registers with kubelet
+#
+# Node host IPs confirmed: 10.0.0.221, 10.0.0.222, 10.0.0.223 (all in /24)
+#
+# NIST: SC-7, SC-7(5), AC-4
+---
+# Default deny all — defense in depth
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: istio-cni
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: istio-cni
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Allow egress to kube-API server (port 6443) on master node IPs
+# istio-cni-node watches Pods, Namespaces, and NetworkAttachmentDefinitions
+# via the kube-API. Master node IPs confirmed: 10.0.0.221/222/223 (/24).
+# Using ipBlock (not port-only) because kube-API runs on host IPs, not pod IPs.
+# OVN-K evaluates against post-DNAT dest — ipBlock matches node host IP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api-egress
+  namespace: istio-cni
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/24
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+# Allow egress to istiod (Pilot) in istio-system on port 15012
+# istio-cni-node agent syncs mesh config via xDS from istiod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-istiod-egress
+  namespace: istio-cni
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - port: 15012
+          protocol: TCP
+---
+# Allow egress to kubelet (port 10250) on master/node host IPs
+# istio-cni-node registers the CNI plugin with the local kubelet.
+# Node host IPs are in 10.0.0.0/24 (same CIDR as kube-API).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kubelet-egress
+  namespace: istio-cni
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/24
+      ports:
+        - port: 10250
+          protocol: TCP

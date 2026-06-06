@@ -1,0 +1,180 @@
+# NetworkPolicy: Allow Prometheus to scrape Istio sidecar metrics (ports 15090, 15020)
+# Applied per-namespace to work with default-deny-all policies
+# Selects pods with security.istio.io/tlsMode=istio (injected by Istio)
+# Allows from namespaces with network.openshift.io/policy-group=monitoring
+# (covers openshift-monitoring and openshift-user-workload-monitoring)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: media
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: homepage
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: backstage
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: defectdojo
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: keycloak
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: harbor
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-istio-scrape
+  namespace: monitoring
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+    ports:
+    - port: 15090
+      protocol: TCP
+    - port: 15020
+      protocol: TCP

@@ -1,0 +1,21 @@
+---
+# NOTE (2026-05-14): jaeger-operator.v1.65.0 is the latest entry in the
+# community-operators stable channel. Its OLM CSV references
+# gcr.io/kubebuilder/kube-rbac-proxy:v0.13.1 which no longer exists on gcr.io.
+# The installed CSV and Deployment were patched in-cluster to use
+# quay.io/brancz/kube-rbac-proxy:v0.18.0 (the actively-maintained Brancz fork).
+# The Subscription is pinned to Automatic to allow future catalog updates;
+# when a newer jaeger-operator version with a fixed image is published,
+# OLM will upgrade automatically and the in-cluster patch will be superseded
+# by the correct catalog image.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: jaeger
+  namespace: openshift-operators
+spec:
+  channel: stable
+  name: jaeger
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

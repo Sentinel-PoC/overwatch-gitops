@@ -1,0 +1,25 @@
+# mesh-config is still applied manually via oc apply -Rf apps/mesh-config/
+#
+# OPS-207 partially addressed: the istio-controlplane Application was brought
+# under full ArgoCD management (see clusters/overwatch/apps/istio-controlplane-app.yaml)
+# after adding sailoperator.io/Istio and IstioCNI to the AppProject
+# clusterResourceWhitelist.
+#
+# mesh-config remains reference-only because:
+#   1. It spans 10+ namespaces that each need their own sync semantics
+#   2. It includes cluster-scoped ClusterRoleBinding resources
+#   3. A recursive Application would need prune: false to avoid accidentally
+#      deleting any resource during a partial sync, which defeats half the
+#      point of GitOps management anyway
+#
+# Better future path: split mesh-config into per-namespace Applications that
+# each manage one namespace's mesh resources. Each namespace's PeerAuthentication,
+# AuthorizationPolicies, VirtualServices, and ServiceEntries co-locate with
+# the namespace's workload Application, so sync waves and prune semantics
+# match intent.
+#
+# Until that split is done, this file is documentation only — manifests in
+# apps/mesh-config/ are applied manually.
+---
+# Placeholder — NOT an active Application.
+# Kept as a pointer so future engineers find this decision history.

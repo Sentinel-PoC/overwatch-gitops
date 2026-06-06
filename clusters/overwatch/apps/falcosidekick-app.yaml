@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falcosidekick
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/falcosidekick
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: falco-system
+  # OPS-521: ESO controller mutates ExternalSecret/falcosidekick-wazuh-indexer after each
+  # ArgoCD sync — adds default values for remoteRef sub-fields, sets target.deletionPolicy,
+  # adds reconcile.external-secrets.io/trigger annotation, and normalizes refreshInterval
+  # duration string (1h → 1h0m0s via Go time.Duration.String()). These are cosmetic ESO
+  # control-plane mutations; the underlying Secret is correct. Suppress the drift here so
+  # ArgoCD OutOfSync signals reflect genuine manifest changes only.
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+        - .spec.refreshInterval
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

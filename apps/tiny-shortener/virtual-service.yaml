@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: tiny-shortener
+  namespace: tiny-shortener
+spec:
+  hosts:
+    - tiny.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: tiny-shortener.tiny-shortener.svc.cluster.local
+            port:
+              number: 8080

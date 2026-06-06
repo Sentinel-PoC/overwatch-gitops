@@ -1,0 +1,394 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-checker-scripts
+  namespace: health-monitoring
+  labels:
+    app.kubernetes.io/name: health-checker
+data:
+  health_checker.py: |
+    #!/usr/bin/env python3
+    """Sentinel Platform Health Checker — functional verification of platform services."""
+
+    import os
+    import sys
+    import json
+    import time
+    import hashlib
+    import logging
+    import threading
+    from datetime import datetime, timezone
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    import requests
+    from requests.exceptions import RequestException
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%SZ",
+        stream=sys.stdout,
+    )
+    log = logging.getLogger("health-checker")
+
+    # ─── Configuration ──────────────────────────────────────────────
+    NTFY_URL = os.environ.get("NTFY_URL", "http://ntfy.health-monitoring.svc:8080")
+    NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "sentinel-health")
+    MATRIX_HOMESERVER = os.environ.get("MATRIX_HOMESERVER", "https://matrix.208.haist.farm")
+    MATRIX_TOKEN = os.environ.get("MATRIX_TOKEN", "")
+    MATRIX_ROOM_ID = os.environ.get("MATRIX_ROOM_ID", "")
+    CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL_SECONDS", "900"))
+    DEDUP_INTERVAL = int(os.environ.get("DEDUP_INTERVAL_SECONDS", "3600"))
+    HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "10"))
+    HEALTH_PORT = int(os.environ.get("HEALTH_PORT", "8081"))
+    STARTUP_DELAY = int(os.environ.get("STARTUP_DELAY", "60"))
+    FAIL_THRESHOLD = int(os.environ.get("FAIL_THRESHOLD", "2"))
+
+    # ─── Alert State ────────────────────────────────────────────────
+    alert_state = {}
+    consecutive_failures = {}   # {service_name: int} — consecutive fail count
+    last_check_time = None
+    last_check_results = {}
+    is_initial_check = True     # First check cycle is silent (no notifications)
+
+    # ─── Health Checks ──────────────────────────────────────────────
+    def check_argocd():
+        """Verify ArgoCD is responding."""
+        r = requests.get(
+            "https://argocd.208.haist.farm",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+            allow_redirects=True,
+        )
+        r.raise_for_status()
+        return f"HTTP {r.status_code}"
+
+    def check_harbor():
+        """Verify Harbor health endpoint reports all components healthy."""
+        r = requests.get(
+            "https://harbor.208.haist.farm/api/v2.0/health",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+        )
+        r.raise_for_status()
+        data = r.json()
+        status = data.get("status", "unknown")
+        if status != "healthy":
+            components = data.get("components", [])
+            unhealthy = [c["name"] for c in components if c.get("status") != "healthy"]
+            raise AssertionError(f"Status: {status}, unhealthy: {unhealthy}")
+        return "All components healthy"
+
+    def check_grafana():
+        """Verify Grafana health endpoint."""
+        r = requests.get(
+            "https://grafana.208.haist.farm/api/health",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+        )
+        r.raise_for_status()
+        data = r.json()
+        db = data.get("database", "unknown")
+        if db != "ok":
+            raise AssertionError(f"Database status: {db}")
+        return f"Healthy, db={db}"
+
+    def check_matrix():
+        """Verify Matrix Synapse returns supported versions."""
+        r = requests.get(
+            "https://matrix.208.haist.farm/_matrix/client/versions",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+        )
+        r.raise_for_status()
+        data = r.json()
+        versions = data.get("versions", [])
+        if not versions:
+            raise AssertionError("No supported versions returned")
+        return f"{len(versions)} versions supported"
+
+    def check_ntfy():
+        """Verify ntfy health endpoint (internal service)."""
+        r = requests.get(f"{NTFY_URL}/v1/health", timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("healthy"):
+            raise AssertionError(f"Unhealthy: {data}")
+        return "Healthy"
+
+    def check_backstage():
+        """Verify Backstage is responding."""
+        r = requests.get(
+            "https://backstage.208.haist.farm/",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+            allow_redirects=True,
+        )
+        if r.status_code >= 500:
+            raise AssertionError(f"HTTP {r.status_code}")
+        return f"HTTP {r.status_code}"
+
+    def check_netbox():
+        """Verify NetBox is responding."""
+        r = requests.get(
+            "https://netbox.208.haist.farm/login/",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+            allow_redirects=True,
+        )
+        if r.status_code >= 500:
+            raise AssertionError(f"HTTP {r.status_code}")
+        return f"HTTP {r.status_code}"
+
+    def check_console():
+        """Verify Overwatch Console health."""
+        r = requests.get(
+            "https://console-sec.208.haist.farm/api/health",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+        )
+        r.raise_for_status()
+        return "Healthy"
+
+    def check_website():
+        """Verify Haists Website health."""
+        r = requests.get(
+            "https://www.208.haist.farm/api/health",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+        )
+        r.raise_for_status()
+        return "Healthy"
+
+    def check_plane():
+        """Verify Plane is responding."""
+        r = requests.get(
+            "https://plane.208.haist.farm/api/",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+            allow_redirects=True,
+        )
+        if r.status_code >= 500:
+            raise AssertionError(f"HTTP {r.status_code}")
+        return f"HTTP {r.status_code}"
+
+    def check_homepage():
+        """Verify Homepage is responding."""
+        r = requests.get(
+            "https://home.208.haist.farm/",
+            timeout=HTTP_TIMEOUT,
+            verify=True,
+            allow_redirects=True,
+        )
+        r.raise_for_status()
+        return "Healthy"
+
+    # ─── Check Registry ─────────────────────────────────────────────
+    CHECKS = {
+        "ArgoCD": check_argocd,
+        "Harbor": check_harbor,
+        "Grafana": check_grafana,
+        "Matrix": check_matrix,
+        "ntfy": check_ntfy,
+        "Backstage": check_backstage,
+        "NetBox": check_netbox,
+        "Console": check_console,
+        "Website": check_website,
+        "Plane": check_plane,
+        "Homepage": check_homepage,
+    }
+
+    # ─── Notifications ───────────────────────────────────────────────
+    def send_ntfy(title, message, priority="default", tags=None):
+        """Push notification to ntfy."""
+        try:
+            headers = {"Title": title, "Priority": priority}
+            if tags:
+                headers["Tags"] = ",".join(tags)
+            requests.post(
+                f"{NTFY_URL}/{NTFY_TOPIC}",
+                data=message.encode("utf-8"),
+                headers=headers,
+                timeout=HTTP_TIMEOUT,
+            )
+        except Exception as e:
+            log.error(f"Failed to send ntfy: {e}")
+
+    def send_matrix(message_html):
+        """Send notification to Matrix room."""
+        if not MATRIX_TOKEN or not MATRIX_ROOM_ID:
+            return
+        try:
+            txn_id = hashlib.sha256(
+                f"{time.time_ns()}{MATRIX_ROOM_ID}{message_html[:50]}".encode()
+            ).hexdigest()[:16]
+            url = (
+                f"{MATRIX_HOMESERVER}/_matrix/client/v3/rooms/"
+                f"{MATRIX_ROOM_ID}/send/m.room.message/{txn_id}"
+            )
+            requests.put(
+                url,
+                json={
+                    "msgtype": "m.text",
+                    "body": message_html.replace("<br>", "\n"),
+                    "format": "org.matrix.custom.html",
+                    "formatted_body": message_html,
+                },
+                headers={"Authorization": f"Bearer {MATRIX_TOKEN}"},
+                timeout=HTTP_TIMEOUT,
+                verify=True,
+            )
+        except Exception as e:
+            log.error(f"Failed to send Matrix: {e}")
+
+    def notify_failure(service, error_msg):
+        """Send failure notification."""
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        send_ntfy(
+            f"[FAIL] {service}",
+            f"Expected: healthy, Got: {error_msg}\nTime: {ts}",
+            priority="high",
+            tags=["rotating_light", "x"],
+        )
+        send_matrix(
+            f"<strong>[FAIL] {service}</strong><br>"
+            f"Error: {error_msg}<br>Time: {ts}"
+        )
+
+    def notify_recovery(service, downtime_str):
+        """Send recovery notification."""
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        send_ntfy(
+            f"[RECOVERED] {service}",
+            f"Back to healthy (downtime: {downtime_str})\nTime: {ts}",
+            priority="default",
+            tags=["white_check_mark"],
+        )
+        send_matrix(
+            f"<strong>[RECOVERED] {service}</strong><br>"
+            f"Back to healthy (downtime: {downtime_str})<br>Time: {ts}"
+        )
+
+    # ─── Check Runner ───────────────────────────────────────────────
+    def run_checks():
+        """Execute all health checks with dedup, threshold, and recovery logic."""
+        global last_check_time, last_check_results, is_initial_check
+        now = datetime.now(timezone.utc)
+        last_check_time = now
+        results = {}
+        silent = is_initial_check  # First cycle establishes baseline only
+
+        if silent:
+            log.info("Initial check cycle — establishing baseline (notifications suppressed)")
+
+        for name, check_fn in CHECKS.items():
+            try:
+                detail = check_fn()
+                results[name] = {"status": "ok", "detail": detail}
+                # Reset consecutive failure counter on success
+                consecutive_failures[name] = 0
+                # Recovery check (only notify if we previously alerted)
+                prev = alert_state.get(name)
+                if prev and prev["status"] == "fail" and prev.get("alerted") and not silent:
+                    downtime = now - prev["first_fail"]
+                    downtime_str = str(downtime).split(".")[0]
+                    log.info(f"RECOVERED: {name} (downtime: {downtime_str})")
+                    notify_recovery(name, downtime_str)
+                alert_state[name] = {"status": "ok"}
+            except Exception as e:
+                error_msg = str(e)
+                results[name] = {"status": "fail", "detail": error_msg}
+                consecutive_failures[name] = consecutive_failures.get(name, 0) + 1
+                consec = consecutive_failures[name]
+                log.warning(f"FAIL: {name} -- {error_msg} (consecutive: {consec}/{FAIL_THRESHOLD})")
+
+                prev = alert_state.get(name)
+                if prev and prev["status"] == "fail":
+                    # Already in fail state — check for re-alert (dedup interval)
+                    if not silent and prev.get("alerted"):
+                        elapsed = (now - prev["last_alert"]).total_seconds()
+                        if elapsed >= DEDUP_INTERVAL:
+                            log.info(f"RE-ALERT: {name} (persistent, {elapsed:.0f}s)")
+                            notify_failure(name, error_msg)
+                            prev["last_alert"] = now
+                            prev["message"] = error_msg
+                    # Threshold just reached — send first alert
+                    elif not silent and not prev.get("alerted") and consec >= FAIL_THRESHOLD:
+                        log.info(f"THRESHOLD REACHED: {name} ({consec} consecutive failures)")
+                        notify_failure(name, error_msg)
+                        prev["alerted"] = True
+                        prev["last_alert"] = now
+                        prev["message"] = error_msg
+                else:
+                    # New failure — record but don't alert until threshold
+                    alert_state[name] = {
+                        "status": "fail",
+                        "first_fail": now,
+                        "last_alert": now,
+                        "message": error_msg,
+                        "alerted": False,
+                    }
+                    if not silent and consec >= FAIL_THRESHOLD:
+                        log.info(f"NEW FAILURE (immediate threshold): {name}")
+                        notify_failure(name, error_msg)
+                        alert_state[name]["alerted"] = True
+                    elif not silent:
+                        log.info(f"FAILING: {name} ({consec}/{FAIL_THRESHOLD}, waiting for threshold)")
+
+        is_initial_check = False
+        last_check_results = results
+        ok = sum(1 for r in results.values() if r["status"] == "ok")
+        fail = sum(1 for r in results.values() if r["status"] == "fail")
+        log.info(f"Check complete: {ok} OK, {fail} FAIL / {len(results)} total")
+
+    # ─── Health HTTP Server ──────────────────────────────────────────
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path in ("/healthz", "/v1/health"):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                response = {
+                    "healthy": True,
+                    "service": "sentinel-health-checker",
+                    "last_check": last_check_time.isoformat() if last_check_time else None,
+                    "results": last_check_results,
+                }
+                self.wfile.write(json.dumps(response).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    def start_health_server():
+        server = HTTPServer(("0.0.0.0", HEALTH_PORT), HealthHandler)
+        log.info(f"Health server listening on :{HEALTH_PORT}")
+        server.serve_forever()
+
+    # ─── Main ────────────────────────────────────────────────────────
+    def main():
+        log.info("Sentinel Health Checker starting")
+        log.info(f"Interval: {CHECK_INTERVAL}s, Dedup: {DEDUP_INTERVAL}s")
+        log.info(f"Startup delay: {STARTUP_DELAY}s, Fail threshold: {FAIL_THRESHOLD}")
+        log.info(f"ntfy: {NTFY_URL}/{NTFY_TOPIC}")
+        log.info(f"Checks: {', '.join(CHECKS.keys())}")
+
+        # Start health endpoint immediately so probes pass during startup delay
+        health_thread = threading.Thread(target=start_health_server, daemon=True)
+        health_thread.start()
+
+        # Wait for co-deployed dependencies (ntfy, etc.) to stabilize
+        if STARTUP_DELAY > 0:
+            log.info(f"Waiting {STARTUP_DELAY}s for dependencies to stabilize...")
+            time.sleep(STARTUP_DELAY)
+            log.info("Startup delay complete, beginning checks")
+
+        run_checks()  # Initial check — silent (establishes baseline)
+        while True:
+            time.sleep(CHECK_INTERVAL)
+            run_checks()
+
+    if __name__ == "__main__":
+        main()

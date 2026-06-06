@@ -1,0 +1,35 @@
+---
+# OPS-518 — Vault ClusterIssuer
+#
+# Uses Vault kubernetes auth (same mount/pattern as external-secrets) to authenticate.
+# Vault kubernetes role "cert-manager" must be created before this issuer will become Ready.
+# The ansible task at ansible/roles/vault-server/tasks/vault-cert-manager-role.yml
+# creates the required kubernetes/role/cert-manager in Vault.
+#
+# pki_int/sign/208-haist-farm: issues leaf certs under the intermediate CA.
+# The 208-haist-farm role allows *.208.haist.farm and subdomains up to 365d TTL.
+#
+# serviceAccountRef: cert-manager (token projected into cert-manager namespace).
+# mountPath: kubernetes — same Vault kubernetes auth mount used by external-secrets.
+#
+# NOTE: this resource will remain NotReady until:
+#   1. cert-manager Subscription CSV reaches Succeeded
+#   2. Vault kubernetes/role/cert-manager is created (ansible task)
+#   3. cert-manager ServiceAccount token is valid
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: vault-issuer
+  namespace: cert-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  vault:
+    server: https://vault.208.haist.farm
+    path: pki_int/sign/208-haist-farm
+    auth:
+      kubernetes:
+        mountPath: /v1/auth/kubernetes
+        role: cert-manager
+        serviceAccountRef:
+          name: cert-manager

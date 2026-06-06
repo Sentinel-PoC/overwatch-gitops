@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: langfuse-postgresql-data
+  namespace: langfuse
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: langfuse-pg-iscsi
+  resources:
+    requests:
+      storage: 15Gi

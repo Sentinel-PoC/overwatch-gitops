@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse-postgresql
+  namespace: langfuse
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: langfuse
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: langfuse
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        app.kubernetes.io/instance: langfuse
+        app.kubernetes.io/component: database
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: postgresql
+          image: harbor.208.haist.farm/sentinel/postgres@sha256:e0056c2601d99ba8f4700dee2c070fa237c2d364d8b051c820f2787e58e9ae5e
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: postgres_langfuse
+            - name: POSTGRES_USER
+              value: langfuse
+            # OPS-110: password sourced from Vault via langfuse-pg-creds ExternalSecret.
+            # Vault path: secret/langfuse/postgresql, key 'password'.
+            # Rotation procedure documented in apps/langfuse/credentials/langfuse-pg-creds-externalsecret.yaml
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-pg-creds
+                  key: password
+            # Allow non-localhost connections (langfuse-web/worker pods).
+            # Without this, initdb produces a pg_hba.conf with only `local`
+            # and 127.0.0.1 entries — every TCP connect from another pod
+            # gets P1010 "User was denied access". This was the cause of a
+            # multi-day langfuse-web/worker CrashLoopBackOff during the
+            # 2026-04-23..25 cascade.
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: scram-sha-256
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgresql-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U langfuse -d postgres_langfuse
+            failureThreshold: 360
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U langfuse -d postgres_langfuse
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U langfuse -d postgres_langfuse
+            periodSeconds: 10
+      volumes:
+        - name: postgresql-data
+          persistentVolumeClaim:
+            claimName: langfuse-postgresql-data

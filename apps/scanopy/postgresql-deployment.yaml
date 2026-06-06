@@ -1,0 +1,125 @@
+---
+# OPS-398: Scanopy PostgreSQL. Pattern mirrors apps/netbox/postgresql-deployment.yaml.
+# Image: harbor.208.haist.farm/sentinel/postgres:17-alpine (must be mirrored from
+# postgres:17-alpine before deploy — or reuse existing 16.13-alpine3.23 if 17 is
+# not yet available in Harbor).
+# NOTE: Operator must mirror postgres:17-alpine to harbor and run sign-harbor-image
+# workflow before ArgoCD sync (Kyverno verify-image-signatures is Enforce).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scanopy-postgresql
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: scanopy
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: scanopy
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        app.kubernetes.io/instance: scanopy
+        app.kubernetes.io/component: database
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      serviceAccountName: scanopy-postgresql
+      # OPS-1122: Disable K8s service link env var injection.
+      # Prevents SCANOPY_POSTGRESQL_PORT=tcp://... and similar env var conflicts.
+      enableServiceLinks: false
+      containers:
+        - name: postgresql
+          # Harbor-mirrored and cosign-signed image required by Kyverno policy.
+          # Use postgres:16.13-alpine3.23 if 17-alpine not yet mirrored.
+          image: harbor.208.haist.farm/sentinel/postgres@sha256:a513e5eb5d31612c5c29565e403ba72861b0da184a8676eb5f2bbc0caae3d8ff
+          # SEC-122: postgres alpine image uses uid=70 (postgres user) for its PID 1
+          # process (verified live: ps aux shows postgres:PID1). The entrypoint checks
+          # "if [ $(id -u) = 0 ]" before doing root setup — running as uid 70 skips
+          # root-only init (appropriate since PGDATA is already initialized on the PVC).
+          # runAsUser: 70 matches the postgres uid in alpine (/etc/passwd confirmed).
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: scanopy
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: scanopy-postgresql
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgresql-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U postgres -d scanopy
+            failureThreshold: 120
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U postgres -d scanopy
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U postgres -d scanopy
+            periodSeconds: 30
+      volumes:
+        - name: postgresql-data
+          persistentVolumeClaim:
+            claimName: scanopy-postgresql-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scanopy-postgresql
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: scanopy
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: scanopy

@@ -1,0 +1,67 @@
+---
+# ArgoCD Application: openshift-authentication
+#
+# Manages OKD OAuth/cluster config and the ExternalSecret for the Authentik
+# OIDC client secret in openshift-config namespace.
+#
+# ACTIVATION PREREQUISITES (operator must complete before enabling):
+# 1. Resolve OPS-629: Pangolin OIDC discovery 404 for auth-next.208.haist.farm
+#    Verify: curl https://auth-next.208.haist.farm/application/o/oauth-openshift/.well-known/openid-configuration
+#    Expected: HTTP 200 with issuer: https://auth-next.208.haist.farm/application/o/oauth-openshift/
+#
+# 2. Update AppProject whitelist to permit config.openshift.io/OAuth:
+#    Edit apps/argocd/appproject-default.yaml → add:
+#      - group: config.openshift.io
+#        kind: OAuth
+#    Apply: oc apply -f apps/argocd/appproject-default.yaml
+#    (This file already has the whitelist entry as of OPS-605 Phase 3 PR)
+#
+# 3. Then sync this application via ArgoCD UI or:
+#    argocd app sync openshift-authentication
+#
+# OKD impact: After sync, users see TWO login buttons on OKD console:
+#   "Log in with keycloak" (existing Keycloak — unchanged)
+#   "Log in with authentik" (new Authentik)
+# No disruption to existing kubeconfig-based oc login flows.
+#
+# Tracking: OPS-605 Phase 3
+# NOTE: This Application YAML is intentionally NOT added to root-app.yaml
+# yet — operator must manually apply after prerequisites are met.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openshift-authentication
+  namespace: openshift-gitops
+  annotations:
+    # Do NOT auto-sync until activation prerequisites are met (see above)
+    argocd.argoproj.io/sync-policy: manual
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/openshift-authentication
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-config
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef
+        - .spec.target
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+    # OAuth/cluster is cluster-scoped; OKD operators add annotations/labels at runtime
+    - group: config.openshift.io
+      kind: OAuth
+      jqPathExpressions:
+        - .metadata.annotations
+        - .metadata.resourceVersion
+        - .metadata.generation
+  syncPolicy:
+    syncOptions:
+    - CreateNamespace=false
+    - ServerSideApply=true
+    - RespectIgnoreDifferences=true
+    # automated sync intentionally omitted — manual sync required
+    # Enable after OPS-629 resolved and AppProject whitelist updated

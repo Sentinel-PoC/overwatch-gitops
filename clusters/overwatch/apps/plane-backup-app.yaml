@@ -1,0 +1,34 @@
+# OPS-481: ArgoCD Application for plane-backup (Phase 1 — Plane PostgreSQL → MinIO)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plane-backup
+  namespace: openshift-gitops
+  labels:
+    app.kubernetes.io/part-of: plane-backup
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/plane-backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: plane-backup
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[]?.remoteRef.conversionStrategy
+        - .spec.data[]?.remoteRef.decodingStrategy
+        - .spec.data[]?.remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy
+        - .metadata.annotations["reconcile.external-secrets.io/trigger"]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

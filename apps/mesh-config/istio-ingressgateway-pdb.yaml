@@ -1,0 +1,14 @@
+---
+# PodDisruptionBudget for the ingress gateway so at least one replica stays up
+# during node drains / rolling upgrades. The deployment runs 2 replicas.
+# OPS-208.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: istio-ingressgateway
+  namespace: istio-ingress
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      istio: ingressgateway

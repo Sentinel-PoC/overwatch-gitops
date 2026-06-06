@@ -1,0 +1,58 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-health-checker
+  namespace: health-monitoring
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: health-checker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow K8s probes and internal health endpoint access
+    - ports:
+        - port: 8081
+          protocol: TCP
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    # ntfy in same namespace (internal notifications)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ntfy
+      ports:
+        - port: 8080
+          protocol: TCP
+    # HTTPS to Traefik/pangolin for *.208.haist.farm health checks
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.168/32
+      ports:
+        - port: 443
+          protocol: TCP
+    # HTTPS to external targets (haist.farm, Let's Encrypt OCSP)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP

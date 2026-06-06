@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: grafana-208
+  namespace: monitoring
+spec:
+  host: grafana.208.haist.farm
+  to:
+    kind: Service
+    name: grafana
+  port:
+    targetPort: service
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect

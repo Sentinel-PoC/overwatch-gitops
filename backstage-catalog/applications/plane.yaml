@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: plane
+  description: Plane project management platform — issue tracking and work coordination for the Sentinel team
+  annotations:
+    backstage.io/kubernetes-namespace: plane
+    argocd/app-name: plane
+  links:
+    - url: https://plane.208.haist.farm
+      title: Plane Project Management
+      icon: dashboard
+  tags:
+    - project-management
+    - issue-tracking
+    - application
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

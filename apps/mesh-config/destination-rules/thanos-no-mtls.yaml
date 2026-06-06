@@ -1,0 +1,11 @@
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: thanos-querier-no-mtls
+  namespace: monitoring
+spec:
+  host: thanos-querier.openshift-monitoring.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE

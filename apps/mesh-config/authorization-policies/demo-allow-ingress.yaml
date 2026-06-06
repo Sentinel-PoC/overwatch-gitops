@@ -1,0 +1,40 @@
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-hello-world-ingress
+  namespace: demo
+spec:
+  selector:
+    matchLabels:
+      app: hello
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - openshift-ingress
+      to:
+        - operation:
+            methods:
+              - GET
+              - HEAD
+              - OPTIONS
+            ports:
+              - "8080"
+    - from:
+        - source:
+            namespaces:
+              - demo
+    - from:
+        - source:
+            ipBlocks:
+              - 10.128.0.0/14
+      to:
+        - operation:
+            methods:
+              - GET
+              - HEAD
+              - OPTIONS
+            ports:
+              - "8080"

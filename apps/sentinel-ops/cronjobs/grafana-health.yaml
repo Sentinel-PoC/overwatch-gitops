@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: grafana-health-check
+  namespace: sentinel-ops
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          annotations:
+            sidecar.istio.io/inject: "false"
+          labels:
+            app.kubernetes.io/name: grafana-health-check
+        spec:
+          serviceAccountName: sentinel-ops-sa
+          restartPolicy: Never
+          containers:
+            - name: health-check
+              image: harbor.208.haist.farm/sentinel/sentinel-ops@sha256:6e6e95aab482e99fdd0e4dafcdbabe9914c0ba8371799335052269a225d05fc6
+              command: ["/bin/bash", "/opt/sentinel-ops/grafana-health.sh"]
+              envFrom:
+                - secretRef:
+                    name: ops-grafana-creds
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+              volumeMounts:
+                - name: scripts
+                  mountPath: /opt/sentinel-ops
+          volumes:
+            - name: scripts
+              configMap:
+                name: ops-scripts
+                defaultMode: 0755

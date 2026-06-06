@@ -1,0 +1,97 @@
+---
+# OPS-808 — VictoriaLogs single-node deployment
+# Image: victoriametrics/victoria-logs:v1.24.0-victorialogs (OPS-1073)
+# Version bump: v1.22.1-victorialogs tag is gone from docker.io as of 2026-05-30.
+# v1.24.0-victorialogs (2025-06-20) is the latest stable release.
+# Flags -storageDataPath, -retentionPeriod (90d suffix), -httpListenAddr verified
+# unchanged and present in v1.24.0 help output.
+# Port 9428 (HTTP API + query UI)
+# Storage: NFS PVC at /victoria-logs-data (500Gi, TrueNAS)
+# Retention: 90 days
+#
+# Security context: OKD assigns arbitrary UID from namespace range.
+# NFS directory /mnt/DATA/logs/victorialogs is mode 0777 to allow arbitrary UID writes.
+# Container runs as non-root with allowPrivilegeEscalation=false.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victorialogs
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: victorialogs
+    app.kubernetes.io/component: log-storage
+    app.kubernetes.io/version: v1.24.0-victorialogs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: victorialogs
+      app.kubernetes.io/component: log-storage
+  strategy:
+    # Recreate: NFS PVC is RWO; new pod must not start before old releases the mount
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: victorialogs
+        app.kubernetes.io/component: log-storage
+        app.kubernetes.io/version: v1.24.0-victorialogs
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: victorialogs
+          image: harbor.208.haist.farm/sentinel/victoria-logs@sha256:61440939f8787e54697714e8a6ade8dc30d5a8dc443dbbbfc5ce41cffad7488a
+          imagePullPolicy: IfNotPresent
+          args:
+            - -storageDataPath=/victoria-logs-data
+            - -retentionPeriod=90d
+            - -httpListenAddr=:9428
+          ports:
+            - name: http
+              containerPort: 9428
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-logs-data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9428
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9428
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 9428
+            failureThreshold: 30
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: victorialogs-data

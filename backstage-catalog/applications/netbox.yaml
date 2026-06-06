@@ -1,0 +1,66 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: netbox
+  description: Network documentation and IPAM management
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=netbox
+    backstage.io/kubernetes-namespace: netbox
+    argocd/app-name: netbox
+  links:
+    - url: https://netbox.208.haist.farm
+      title: NetBox Dashboard
+      icon: dashboard
+  tags:
+    - networking
+    - ipam
+    - documentation
+    - application
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:netbox-postgresql
+    - component:netbox-redis
+  providesApis:
+    - netbox-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: netbox-postgresql
+  description: PostgreSQL database backend for NetBox
+  annotations:
+    backstage.io/kubernetes-namespace: netbox
+    argocd/app-name: netbox
+  tags:
+    - database
+    - postgresql
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: netbox-redis
+  description: Redis/Valkey cache backend for NetBox
+  annotations:
+    backstage.io/kubernetes-namespace: netbox
+    argocd/app-name: netbox
+  tags:
+    - cache
+    - redis
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

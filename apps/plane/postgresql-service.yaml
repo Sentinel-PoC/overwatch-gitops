@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: plane-postgresql
+  namespace: plane
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: plane
+    app.kubernetes.io/component: database
+spec:
+  selector:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: plane
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP

@@ -1,0 +1,32 @@
+---
+# Observability namespace — bootstrap artifact (NOT managed via ArgoCD sync).
+#
+# This file is intentionally excluded from the jaeger ArgoCD Application
+# (clusters/overwatch/apps/jaeger-app.yaml exclude: namespace-observability.yaml)
+# because Namespace is not in AppProject "default" clusterResourceWhitelist.
+#
+# The argocd.argoproj.io/managed-by label below is REQUIRED for the
+# OpenShift GitOps operator to include "observability" in the
+# openshift-gitops/openshift-gitops-default-cluster-config secret's
+# namespaces field. Without it, the operator will reconcile "observability"
+# OUT of the allowlist, causing ArgoCD sync errors:
+#   "Failed to load live state: namespace observability ... is not managed"
+#
+# OPS-391 added "observability" via a live patch to the cluster secret.
+# OPS-396 establishes git as the source-of-truth via this label.
+#
+# BOOTSTRAP / APPLY ACTION REQUIRED (one-time):
+#   oc apply -f apps/jaeger/namespace-observability.yaml
+# OR equivalently:
+#   oc label namespace observability argocd.argoproj.io/managed-by=openshift-gitops
+#
+# This must be run after any cluster rebuild that recreates the namespace
+# without the label.
+#
+# Tracking: OPS-396
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    argocd.argoproj.io/managed-by: openshift-gitops

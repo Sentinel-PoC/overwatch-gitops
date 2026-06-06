@@ -1,0 +1,20 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sail-operator
+  description: SAIL Operator managing Istio service mesh lifecycle on OKD
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=sail-operator
+    backstage.io/kubernetes-namespace: openshift-operators
+    argocd/app-name: istio-controlplane
+  tags:
+    - operator
+    - service-mesh
+    - istio
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

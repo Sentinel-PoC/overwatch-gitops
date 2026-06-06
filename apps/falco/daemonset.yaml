@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falco
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: falco
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: falco
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8765"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      serviceAccountName: falco
+      hostPID: true
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: falco
+          image: harbor.208.haist.farm/sentinel/falco@sha256:9f3e058ce652ecf98aa2b4d8a41e80385b08ecb17d3153bb1d1a03a406378a31
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          args:
+            - /usr/bin/falco
+            - -c
+            - /etc/falco/falco.yaml
+          ports:
+            - containerPort: 8765
+              name: http-metrics
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8765
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8765
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              # OPS-1013: raised from 256Mi; ring buffers increase from 48MB to
+              # 96MB (+48MB). Previous RSS ~479MB was at 93% of old 512Mi limit.
+              memory: 512Mi
+            limits:
+              cpu: 200m
+              # OPS-1013: raised from 512Mi; expected peak RSS ~527MB (479+48MB
+              # buffer increase). 768Mi provides ~241MB headroom above expected peak.
+              memory: 768Mi
+          volumeMounts:
+            - name: falco-config
+              mountPath: /etc/falco/falco.yaml
+              subPath: falco.yaml
+            - name: falco-config
+              mountPath: /etc/falco/falco_rules.local.yaml
+              subPath: falco_rules.local.yaml
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: dev
+              mountPath: /host/dev
+              readOnly: true
+            - name: crio-socket
+              mountPath: /run/crio/crio.sock
+              readOnly: true
+            - name: boot
+              mountPath: /host/boot
+              readOnly: true
+      volumes:
+        - name: falco-config
+          configMap:
+            name: falco-config
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: dev
+          hostPath:
+            path: /dev
+        - name: crio-socket
+          hostPath:
+            path: /run/crio/crio.sock
+        - name: boot
+          hostPath:
+            path: /boot

@@ -1,0 +1,161 @@
+# OPS-113 — Adopt Kyverno install into ArgoCD (Phase 1, manual sync)
+#
+# Root cause: 75 days of zero admission enforcement because a stale
+# kubectl-patch field-ownership claim left kyverno-admission-controller
+# deploy with empty containers[0].ports. Live oc patch on 2026-04-23
+# restored ports; this file encodes the proper Git source-of-truth so
+# selfHeal (Phase 2) can prevent recurrence.
+#
+# Key names verified against helm show values kyverno/kyverno --version 3.3.4
+# on 2026-04-25. Do not rename without re-verifying against the chart schema.
+
+# admissionController section: HA + secure baseline.
+# These values intentionally diverge from current live `helm get values`
+# (revision 25) because the live values include cascade-era degradations:
+#   - `forceFailurePolicyIgnore: true` was the OPS-88 emergency fail-open;
+#      reverted live earlier today; MUST NOT be re-encoded.
+#   - `replicas: 1` was scaled-down during diagnostic; the secure baseline
+#      is 3 admission-controller replicas with PDB minAvailable=2.
+# Operators reviewing this file: do NOT replace these values with the
+# output of `helm get values` without first confirming with OPS-88 / OPS-113.
+admissionController:
+  replicas: 3
+
+  container:
+    extraArgs:
+      leaderElectionRetryPeriod: 10s
+    resources:
+      limits:
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  # Defensive declarations: encode the port values that the stale
+  # kubectl-patch field-ownership entry erased from the live deploy.
+  # webhookServer.port is the HTTPS admission port (9443).
+  webhookServer:
+    port: 9443
+
+  # metricsService.port is the Prometheus scrape port (8000).
+  metricsService:
+    port: 8000
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  serviceMonitor:
+    enabled: false
+
+backgroundController:
+  # OPS-114-A: scale to HA. Leader-election in-chart ensures only one
+  # replica reconciles at a time; second replica fails over on crash.
+  # Anti-affinity is chart-default enabled; we pin weight: 100 (vs
+  # chart default weight: 1) to make host-topology spread strong.
+  replicas: 2
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  antiAffinity:
+    enabled: true
+
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - background-controller
+          topologyKey: kubernetes.io/hostname
+
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+cleanupController:
+  # OPS-114-C: scale to HA. Mirrors backgroundController pattern (MR-A,
+  # commit b5e970a) and reportsController pattern (MR-B). cleanupController
+  # also serves the kyverno-cleanup-controller.kyverno.svc ValidatingWebhook
+  # (failurePolicy=Ignore so fail-safe). With replicas=2 + PDB minAvailable=1,
+  # rolling updates keep at least one webhook responder alive; worst-case
+  # fail-open by webhook config.
+  replicas: 2
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  antiAffinity:
+    enabled: true
+
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - cleanup-controller
+          topologyKey: kubernetes.io/hostname
+
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+reportsController:
+  # OPS-114-B: scale to HA. Mirrors backgroundController pattern (MR-A,
+  # commit b5e970a). reportsController generates PolicyReport CRs;
+  # leader-election handles active/standby. No webhook served here.
+  replicas: 2
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  antiAffinity:
+    enabled: true
+
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - reports-controller
+          topologyKey: kubernetes.io/hostname
+
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+features:
+  admissionReports:
+    enabled: true
+  policyExceptions:
+    enabled: true
+    namespace: kyverno
+  policyReports:
+    enabled: true
+
+policyReportsCleanup:
+  enabled: false

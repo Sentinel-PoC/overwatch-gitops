@@ -1,0 +1,56 @@
+---
+# Jaeger Operator — ArgoCD-managed app bringing jaeger OLM subscription and
+# Jaeger CR into the standard GitOps reconciliation loop.
+#
+# The Subscription (openshift-operators) installs the jaeger-operator via OLM.
+# The Jaeger CR (observability) creates the all-in-one tracing instance.
+#
+# IMAGE FIX (2026-05-14): The community-operators catalog entry for
+# jaeger-operator.v1.65.0 references gcr.io/kubebuilder/kube-rbac-proxy:v0.13.1
+# which was removed from gcr.io. The installed CSV and Deployment were patched
+# in-cluster to use quay.io/brancz/kube-rbac-proxy:v0.18.0 (the maintained fork).
+# This fix persists as long as OLM does not re-install from catalog (i.e. no CSV
+# upgrade or operator reinstall). Filed for tracking when Plane recovers.
+#
+# Namespace: the observability namespace pre-exists (created at cluster bootstrap,
+# age 94d). The namespace-observability.yaml is intentionally excluded from the
+# source path because Namespace is not in AppProject default clusterResourceWhitelist
+# — adding it would cause sync failure. See istio-controlplane-app.yaml note (OPS-211).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jaeger
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/jaeger
+    directory:
+      exclude: namespace-observability.yaml
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      # prune: false — the OLM Subscription should not be auto-deleted if
+      # the manifest is accidentally removed from git. Operator deletion would
+      # cascade to the Jaeger instance and lose tracing data.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+  ignoreDifferences:
+    # OLM manages the installedCSV and status fields on the Subscription
+    - group: operators.coreos.com
+      kind: Subscription
+      jsonPointers:
+        - /status
+        - /spec/startingCSV
+    # Jaeger operator sets status fields on the Jaeger CR
+    - group: jaegertracing.io
+      kind: Jaeger
+      jsonPointers:
+        - /status

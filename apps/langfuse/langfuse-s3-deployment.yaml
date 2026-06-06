@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse-s3
+  namespace: langfuse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+      app.kubernetes.io/instance: langfuse
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/instance: langfuse
+    spec:
+      imagePullSecrets:
+      - name: harbor-pull-secret
+      containers:
+      - name: minio
+        image: harbor.208.haist.farm/sentinel/minio@sha256:be6ad74d9a0ad5154cd64b60960eababeb6d8fa113a15aae685490206bbeff70
+        ports:
+        - containerPort: 9000
+        - containerPort: 9001
+        # OPS-110: root credentials sourced from Vault via langfuse-s3-creds ExternalSecret.
+        # Vault path: secret/langfuse/s3, keys 'root_user' and 'root_password'.
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-s3-creds
+              key: root_user
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-s3-creds
+              key: root_password
+        - name: MINIO_DEFAULT_BUCKETS
+          value: langfuse-events,langfuse-media
+        command:
+        - sh
+        - -c
+        - minio server /data --console-address :9001 & sleep 10 && mc alias set local
+          http://localhost:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" && mc mb local/langfuse-events
+          --ignore-existing && mc mb local/langfuse-media --ignore-existing && echo
+          "Buckets ready" && wait
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        startupProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          failureThreshold: 60
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          periodSeconds: 30
+      volumes:
+      - name: data
+        emptyDir:
+          sizeLimit: 15Gi
+      securityContext:
+        fsGroup: 1001
+      initContainers:
+      - name: fix-permissions
+        image: harbor.208.haist.farm/sentinel/postgres@sha256:e0056c2601d99ba8f4700dee2c070fa237c2d364d8b051c820f2787e58e9ae5e
+        command:
+        - sh
+        - -c
+        - chmod -R 777 /data && echo "permissions fixed"
+        volumeMounts:
+        - name: data
+          mountPath: /data

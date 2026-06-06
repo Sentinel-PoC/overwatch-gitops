@@ -1,0 +1,17 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: cfwc-website
+  namespace: cfwc-website
+spec:
+  hosts:
+    - cfwc.dev.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    - route:
+        - destination:
+            host: cfwc-website.cfwc-website.svc.cluster.local
+            port:
+              number: 8080

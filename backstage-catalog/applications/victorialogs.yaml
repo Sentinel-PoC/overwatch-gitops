@@ -1,0 +1,26 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: victorialogs
+  description: VictoriaLogs log storage — high-performance log database in the logging namespace
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=victorialogs
+    backstage.io/kubernetes-namespace: logging
+    argocd/app-name: victorialogs
+  links:
+    - url: https://victorialogs.208.haist.farm
+      title: VictoriaLogs UI
+      icon: dashboard
+  tags:
+    - logging
+    - observability
+    - storage
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:alloy

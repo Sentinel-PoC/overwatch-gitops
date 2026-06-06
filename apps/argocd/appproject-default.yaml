@@ -1,0 +1,211 @@
+# Default ArgoCD AppProject — bootstrap resource
+# ArgoCD cannot manage its own AppProject (bootstrapping problem).
+# Apply manually after cluster setup or ArgoCD operator install:
+#   oc apply -f apps/argocd/appproject-default.yaml
+#
+# ALSO REQUIRED (one-time): Enable cluster-scoped resource management on the
+# ArgoCD cluster secret. The operator creates the in-cluster secret with a
+# 'namespaces' field (from managed-by labels), which puts ArgoCD in namespaced
+# mode. Without 'clusterResources: true', cluster-scoped resources are rejected.
+#
+#   oc patch secret openshift-gitops-default-cluster-config -n openshift-gitops \
+#     --type merge -p '{"data":{"clusterResources":"'$(echo -n true | base64)'"}}'
+#
+# NAMESPACE ALLOWLIST: Namespaces that host ArgoCD-managed workloads must carry
+# the label argocd.argoproj.io/managed-by=openshift-gitops so the operator adds
+# them to the secret's namespaces field. Namespace manifests are NOT in the
+# clusterResourceWhitelist, so they must be applied manually at bootstrap:
+#   - sentinel-ops:           apps/sentinel-ops/namespace.yaml (has label)
+#   - sentinel-ops-sandbox:   apps/sentinel-ops-sandbox/namespace.yaml (has label)
+#   - observability:          apps/jaeger/namespace-observability.yaml (has label — OPS-396)
+#     oc apply -f apps/jaeger/namespace-observability.yaml
+#
+# clusterResourceWhitelist: SCCs (seedbox, reloader, haists-website), ClusterRoles/Bindings
+# (backstage K8s plugin, reloader), ClusterPolicies (Kyverno admission policies),
+# ClusterCleanupPolicies (Kyverno TTL cleanup), StorageClass/PV (static-storage NFS),
+# CustomResourceDefinitions (Kyverno Helm chart ships 11 CRDs — OPS-113),
+# ValidatingWebhookConfiguration (trust-manager — OPS-1124; kyverno creates its own webhooks
+#   dynamically and does NOT ship MutatingWebhookConfiguration via ArgoCD — SEC-84 Phase 2),
+# Istio + IstioCNI (sailoperator.io live-cluster drift reconciliation — OPS-113),
+# config.openshift.io/OAuth (OKD cluster IDP config — OPS-605 Phase 3),
+# cert-manager.io/ClusterIssuer (vault-issuer for PKI — OPS-518; SEC-84 Phase 2),
+# Namespace (backup apps blocked 5-9 days — OPS-884/OPS-882/OPS-883),
+# machineconfiguration.openshift.io/MachineConfig (iSCSI session-wedge fix — OPS-884/OPS-164/OPS-176),
+# machineconfiguration.openshift.io/KubeletConfig (master memory reservation — OPS-1147; SEC-84 Phase 2).
+# clusterResourceWhitelist kinds are explicitly needed and enumerated — only what is listed here.
+# SEC-84 Phase 2 changes: removed MutatingWebhookConfiguration (not ArgoCD-managed, kyverno creates
+#   dynamically); added cert-manager.io/ClusterIssuer and KubeletConfig (both in active use).
+#
+# SOURCE REPO ALLOWLIST (SEC-84): sourceRepos is explicitly allowlisted — no wildcard.
+# Includes both Forgejo URL forms (with and without .git) because Applications use both.
+# Adding a new app that references a NEW repo requires adding that repo here first.
+#
+# DESTINATION ALLOWLIST (SEC-84): destinations is explicitly allowlisted — no wildcard.
+# Server is pinned to the single in-cluster endpoint https://kubernetes.default.svc.
+# Adding a new app that targets a NEW namespace requires adding that namespace here first.
+# This is the intended gate, not a bug — it closes the cluster-takeover path documented in SEC-84.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: openshift-gitops
+spec:
+  clusterResourceWhitelist:
+    # SEC-84 Phase 2: MutatingWebhookConfiguration REMOVED — kyverno creates its own
+    # admission webhooks dynamically; no ArgoCD-managed app deploys MutatingWebhookConfiguration.
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    # OPS-605 Phase 3: OAuth/cluster singleton for OKD IDP management
+    - group: config.openshift.io
+      kind: OAuth
+    - group: kyverno.io
+      kind: ClusterPolicy
+    - group: kyverno.io
+      kind: ClusterCleanupPolicy
+    # OPS-518 / SEC-84 Phase 2: ClusterIssuer — cert-manager vault-issuer (cluster-scoped)
+    - group: cert-manager.io
+      kind: ClusterIssuer
+    # OPS-884: MachineConfig whitelist — unblocks iSCSI session-wedge MachineConfigs (OPS-164, OPS-176)
+    - group: machineconfiguration.openshift.io
+      kind: MachineConfig
+    # SEC-84 Phase 2: KubeletConfig — master-autosize-reserved memory reservation (OPS-1147)
+    - group: machineconfiguration.openshift.io
+      kind: KubeletConfig
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: sailoperator.io
+      kind: Istio
+    - group: sailoperator.io
+      kind: IstioCNI
+    - group: security.openshift.io
+      kind: SecurityContextConstraints
+    - group: storage.k8s.io
+      kind: StorageClass
+    # OPS-1124: Bundle whitelist — trust.cert-manager.io/Bundle is cluster-scoped; absence aborts sync
+    - group: trust.cert-manager.io
+      kind: Bundle
+    # OPS-884: Namespace whitelist — unblocks 4+ backup apps stuck 5-9 days (OPS-882, OPS-883)
+    - group: ""
+      kind: Namespace
+    - group: ""
+      kind: PersistentVolume
+  destinations:
+    # SEC-84: Explicit namespace allowlist — replaces wildcard namespace:'*'/server:'*'.
+    # Server pinned to the single in-cluster endpoint. Derived from all live Applications.
+    # To add a new app: add its namespace here AND re-apply this file (oc apply).
+    - namespace: argocd-token-rotation
+      server: https://kubernetes.default.svc
+    - namespace: backstage
+      server: https://kubernetes.default.svc
+    - namespace: cert-manager
+      server: https://kubernetes.default.svc
+    - namespace: cfwc-website
+      server: https://kubernetes.default.svc
+    - namespace: default
+      server: https://kubernetes.default.svc
+    - namespace: defectdojo
+      server: https://kubernetes.default.svc
+    - namespace: demo
+      server: https://kubernetes.default.svc
+    - namespace: falco-system
+      server: https://kubernetes.default.svc
+    - namespace: haists-website
+      server: https://kubernetes.default.svc
+    - namespace: haists-website-dev
+      server: https://kubernetes.default.svc
+    - namespace: harbor
+      server: https://kubernetes.default.svc
+    - namespace: harbor-backup
+      server: https://kubernetes.default.svc
+    - namespace: health-monitoring
+      server: https://kubernetes.default.svc
+    - namespace: homepage
+      server: https://kubernetes.default.svc
+    - namespace: istio-cni
+      server: https://kubernetes.default.svc
+    - namespace: istio-ingress
+      server: https://kubernetes.default.svc
+    - namespace: istio-system
+      server: https://kubernetes.default.svc
+    - namespace: keycloak
+      server: https://kubernetes.default.svc
+    - namespace: keycloak-backup
+      server: https://kubernetes.default.svc
+    - namespace: keycloak-staging
+      server: https://kubernetes.default.svc
+    - namespace: kyverno
+      server: https://kubernetes.default.svc
+    - namespace: langfuse
+      server: https://kubernetes.default.svc
+    - namespace: langfuse-backup
+      server: https://kubernetes.default.svc
+    - namespace: logging
+      server: https://kubernetes.default.svc
+    - namespace: matrix
+      server: https://kubernetes.default.svc
+    - namespace: matrix-backup
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+    - namespace: netbox
+      server: https://kubernetes.default.svc
+    - namespace: nfs-provisioner
+      server: https://kubernetes.default.svc
+    - namespace: observability
+      server: https://kubernetes.default.svc
+    - namespace: openshift-config
+      server: https://kubernetes.default.svc
+    # OPS-1151: sentinel-ops etcd-backup RoleBinding lives in openshift-etcd namespace
+    - namespace: openshift-etcd
+      server: https://kubernetes.default.svc
+    - namespace: openshift-gitops
+      server: https://kubernetes.default.svc
+    - namespace: openshift-machine-config-operator
+      server: https://kubernetes.default.svc
+    - namespace: openshift-monitoring
+      server: https://kubernetes.default.svc
+    # jaeger Subscription lives in openshift-operators (OLM namespace)
+    - namespace: openshift-operators
+      server: https://kubernetes.default.svc
+    - namespace: overwatch-console
+      server: https://kubernetes.default.svc
+    - namespace: pangolin-internal
+      server: https://kubernetes.default.svc
+    - namespace: plane
+      server: https://kubernetes.default.svc
+    - namespace: plane-backup
+      server: https://kubernetes.default.svc
+    - namespace: reloader
+      server: https://kubernetes.default.svc
+    - namespace: scanopy
+      server: https://kubernetes.default.svc
+    - namespace: sentinel-ops
+      server: https://kubernetes.default.svc
+  sourceRepos:
+    # SEC-84: Explicit repo allowlist — replaces wildcard sourceRepos:'*'.
+    # Both Forgejo URL forms (with and without .git) are required — Applications use both.
+    # Helm chart repos include both trailing-slash and bare forms where apps use either.
+    # To add a new app from a new repo, add that repo URL here AND re-apply this file (oc apply).
+    - https://charts.jetstack.io
+    - https://charts.netbox.oss.netboxlabs.com
+    - https://charts.netbox.oss.netboxlabs.com/
+    - https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops
+    - https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    - https://grafana.github.io/helm-charts
+    - https://helm.goharbor.io
+    # OPS-1186: Harbor OCI registry hosting mirrored Helm charts (bare host/path, no oci:// per ArgoCD 3.x).
+    - harbor.208.haist.farm/sentinel
+    - https://helm.plane.so
+    - https://helm.plane.so/
+    - https://kiali.org/helm-charts
+    - https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner
+    - https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+    - https://kyverno.github.io/kyverno
+    - https://kyverno.github.io/kyverno/
+    - https://langfuse.github.io/langfuse-k8s
+    - https://raw.githubusercontent.com/DefectDojo/django-DefectDojo/helm-charts
+    - https://traefik.github.io/charts

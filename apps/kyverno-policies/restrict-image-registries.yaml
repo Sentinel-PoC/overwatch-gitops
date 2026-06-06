@@ -1,0 +1,117 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Restrict Image Registries
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Container images must come from approved internal registries only.
+      Only harbor.208.haist.farm and mirror.208.haist.farm:8443 are permitted.
+      System namespaces (kube-*, openshift-*) are excluded; all other namespaces
+      including logging, falco-system, and scanopy are covered automatically.
+      Deployed in Audit mode (SEC-100); flipped to Enforce per OPS-1146 (2026-06-02,
+      zero violations in background scan — all workload images confirmed in harbor/mirror).
+      Maps to NIST 800-53 controls CM-7, SI-7.
+spec:
+  background: true
+  validationFailureAction: Enforce
+  rules:
+    - name: restrict-registries
+      # SEC-100 (2026-05-30): replaced hardcoded 16-namespace match list with
+      # match-all-Pods + system-namespace-exclude pattern (SEC-41 style, mirrors
+      # verify-image-signatures.yaml). Covers logging, falco-system, scanopy,
+      # and any future namespace automatically. Allowed registries tightened to
+      # harbor.208.haist.farm and mirror.208.haist.farm:8443 only (removed all
+      # public registries: docker.io, gcr.io, ghcr.io, lscr.io, quay.io,
+      # registry.k8s.io, index.docker.io).
+      # OPS-1146 (2026-06-02): flipped to Enforce — 797 background scan passes,
+      # zero failures; all cluster workloads confirmed using approved registries.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - openshift
+                - openshift-apiserver
+                - openshift-apiserver-operator
+                - openshift-authentication
+                - openshift-authentication-operator
+                - openshift-cloud-controller-manager
+                - openshift-cloud-controller-manager-operator
+                - openshift-cloud-credential-operator
+                - openshift-cluster-csi-drivers
+                - openshift-cluster-machine-approver
+                - openshift-cluster-node-tuning-operator
+                - openshift-cluster-samples-operator
+                - openshift-cluster-storage-operator
+                - openshift-cluster-version
+                - openshift-config
+                - openshift-config-managed
+                - openshift-config-operator
+                - openshift-console
+                - openshift-console-operator
+                - openshift-console-user-settings
+                - openshift-controller-manager
+                - openshift-controller-manager-operator
+                - openshift-dns
+                - openshift-dns-operator
+                - openshift-etcd
+                - openshift-etcd-operator
+                - openshift-gitops
+                - openshift-image-registry
+                - openshift-infra
+                - openshift-ingress
+                - openshift-ingress-canary
+                - openshift-ingress-operator
+                - openshift-insights
+                - openshift-kube-apiserver
+                - openshift-kube-apiserver-operator
+                - openshift-kube-controller-manager
+                - openshift-kube-controller-manager-operator
+                - openshift-kube-scheduler
+                - openshift-kube-scheduler-operator
+                - openshift-kube-storage-version-migrator
+                - openshift-kube-storage-version-migrator-operator
+                - openshift-machine-api
+                - openshift-machine-config-operator
+                - openshift-marketplace
+                - openshift-monitoring
+                - openshift-multus
+                - openshift-network-diagnostics
+                - openshift-network-operator
+                - openshift-node
+                - openshift-oauth-apiserver
+                - openshift-openstack-infra
+                - openshift-operator-lifecycle-manager
+                - openshift-operators
+                - openshift-ovirt-infra
+                - openshift-route-controller-manager
+                - openshift-sdn
+                - openshift-service-ca
+                - openshift-service-ca-operator
+                - openshift-user-workload-monitoring
+                - openshift-vsphere-infra
+      validate:
+        message: >-
+          Images must come from an approved internal registry.
+          Allowed: harbor.208.haist.farm, mirror.208.haist.farm:8443.
+          All public registries (docker.io, gcr.io, ghcr.io, lscr.io, quay.io,
+          registry.k8s.io) are prohibited. Mirror your image to harbor first.
+        deny:
+          conditions:
+            all:
+              - key: '{{ images.[containers, initContainers].*.registry }}'
+                operator: AnyNotIn
+                value:
+                  - harbor.208.haist.farm
+                  - mirror.208.haist.farm:8443

@@ -1,0 +1,88 @@
+---
+# Allow Falco DaemonSet pods → falcosidekick (port 2801)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: falcosidekick-allow-falco-ingress
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falcosidekick
+    app.kubernetes.io/component: event-forwarder
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Falco DaemonSet pods in the same namespace
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: falco
+      ports:
+        - protocol: TCP
+          port: 2801
+---
+# Allow falcosidekick → Wazuh Indexer (192.168.12.100:9200) egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: falcosidekick-allow-wazuh-indexer-egress
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falcosidekick
+    app.kubernetes.io/component: event-forwarder
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+  policyTypes:
+    - Egress
+  egress:
+    # Wazuh Indexer at 192.168.12.100:9200
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.100/32
+      ports:
+        - protocol: TCP
+          port: 9200
+    # DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 5353
+        - protocol: TCP
+          port: 5353
+---
+# OPS-522 — Allow falcosidekick → Loki gateway (observability namespace) egress
+# OPS-1069: corrected port from 3100 to 80. loki-gateway Service exposes port 80
+# (nginx in gateway pod listens on 8080, mapped to Service port 80). Port 3100 is
+# for direct loki-write/read/backend pod access, not the gateway Service.
+# This is a secondary sink; the Wazuh Indexer egress above remains unchanged.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: falcosidekick-allow-loki-egress
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falcosidekick
+    app.kubernetes.io/component: event-forwarder
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+  policyTypes:
+    - Egress
+  egress:
+    # Loki gateway in observability namespace — port 80 (loki-gateway Service port)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - protocol: TCP
+          port: 80

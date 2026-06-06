@@ -1,0 +1,18 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sentinel-ops-sandbox
+  description: Sentinel operations sandbox — isolated copy of sentinel-ops for testing operational changes before production rollout
+  annotations:
+    backstage.io/kubernetes-namespace: sentinel-ops-sandbox
+  tags:
+    - operations
+    - sandbox
+    - development
+    - overwatch
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: sentinel-platform

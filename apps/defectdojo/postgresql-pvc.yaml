@@ -1,0 +1,23 @@
+---
+# DefectDojo PostgreSQL data PVC — binds statically to the retained iSCSI PV
+# `defectdojo-pg-iscsi` (15Gi, iqn.2026-03.farm.haist:okd-defectdojo-pg).
+#
+# Production data was provisioned on a manually-attached iSCSI LUN for
+# performance. Drift was in git (manifest said nfs-storage) not cluster.
+# Corrected during the OPS-206 recovery incident (2026-04-17) so future
+# syncs don't try to dynamically provision a new empty NFS volume and
+# disconnect the real data. The iSCSI PV is reclaimPolicy: Retain, so the
+# data survived the accidental PVC deletion that triggered this fix.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: defectdojo-postgresql-data
+  namespace: defectdojo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: defectdojo-pg-iscsi
+  resources:
+    requests:
+      storage: 15Gi

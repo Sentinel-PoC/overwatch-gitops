@@ -1,0 +1,233 @@
+---
+# OPS-239: Build, push, and sign the sentinel-ops container image.
+# Triggered on push to main when sentinel-ops build assets or signing composites change.
+# Tags the image as :v2 (semver scheme matching existing :v1 tag).
+#
+# OPS-313: Added update-gitops step (final step in build-and-push job) to auto-update
+# apps/sentinel-ops/cronjobs/compliance-check.yaml in this repo after each build.
+# Requires GITOPS_TOKEN Actions secret (Forgejo PAT for sentinel-admin user with
+# push access to overwatch-gitops main). See OPS-313 for token provisioning.
+#
+# OPS-988: Added .forgejo/actions/sign/** and .forgejo/actions/attest/** to trigger
+# paths so that changes to the sign/attest composites automatically retrigger a
+# rebuild+resign. Mirrors the same fix applied to build-netbox-acls.yml.
+#
+# Pattern mirrors overwatch-console/build.yml:
+#   buildah bud → buildah push
+#   → scan (SBOM + OSV + language audit — non-fatal)
+#   → sign (cosign sign, OCI 1.1 Referrers API — must-succeed)
+#   → attest (SLSA v1.0 + SBOM attestation, legacy .att tag — must-succeed)
+#   → report (DefectDojo upload — non-fatal, skip if unreachable)
+#   → cosign verify (OPS-1121: cryptographic verify via Referrers API) → Trivy scan (non-blocking)
+#   → update-gitops (OPS-313 — auto-update cronjob image tag in overwatch-gitops)
+#
+# OPS-701: migrated from monolithic security-scan composite to 4 focused composites.
+# See .forgejo/actions/README.md for interface contracts and design rationale.
+#
+# cosign key: loaded from /etc/cosign/cosign.key on the iac runner
+#   (same key provisioned by iac-control Ansible role from Vault secret/cosign).
+#   COSIGN_KEY secret is also stored as a Forgejo secret for cross-repo composites.
+#
+# Known dependency: pipeline runs on merge to main only (not on PR open/update).
+#   Tag :v2 is pushed after PR is merged. PRs should include a Dockerfile lint check
+#   (the lint.yml workflow validates YAML; Dockerfile static analysis via Trivy runs
+#   in the scan composite post-push).
+#
+# OPS-239 (build-fix): The composite actions are vendored locally at
+#   .forgejo/actions/{scan,sign,attest,report}/ rather than referenced from sentinel-iac.
+#   Root cause: forgejo-runner v12.7.1 resolves cross-repo `uses:` through
+#   code.forgejo.org (the public action mirror), which does not host sentinel-iac.
+#   Local path reference (`uses: ./.forgejo/actions/sign`) bypasses the network
+#   resolution and reads the composite from the checked-out repo.
+#   See OPS-239 Plane issue for full diagnosis and child issues for systemic fix.
+#
+# MERGE ORDER CONSTRAINT: This workflow MUST be merged AFTER the 4 composite
+# PRs (scan/sign/attest/report) land on main. The uses: local-path references
+# below assume .forgejo/actions/{scan,sign,attest,report}/ exist in the repo.
+# (OPS-701 PR 7 of 8 — merges after PRs 2, 3, 4, 5.)
+
+name: Build sentinel-ops image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/sentinel-ops/build/**
+      - .forgejo/actions/sign/**
+      - .forgejo/actions/attest/**
+      - .forgejo/actions/update-gitops/**
+
+env:
+  HARBOR_REGISTRY: harbor.208.haist.farm
+  IMAGE_NAME: sentinel/sentinel-ops
+  # Explicit semver tag for this release. Bumped to :v3 in OPS-1023 (apt-get upgrade for CVE remediation).
+  # OPS-239 introduced :v2 (adds etcdctl v3.5.29).
+  IMAGE_TAG: v3
+  # OPS-313: Manifest to update on each build. Relative path within overwatch-gitops.
+  GITOPS_DEPLOY_FILE: apps/sentinel-ops/cronjobs/compliance-check.yaml
+
+jobs:
+  build-and-push:
+    runs-on: iac-buildah  # [OPS-1104] Pin to buildah-capable runner; avoids pve4-2 dispatch race
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build container image
+        run: |
+          echo "Building $HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          buildah bud \
+            --file apps/sentinel-ops/build/Dockerfile \
+            -t "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" \
+            apps/sentinel-ops/build/
+
+      # Push first, then sign by digest (same pattern as overwatch-console).
+      - name: Push to Harbor
+        id: push
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          buildah login --username "$HARBOR_USERNAME" --password "$HARBOR_PASSWORD" "$HARBOR_REGISTRY"
+          buildah push --digestfile /tmp/digest.txt "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          DIGEST="$(cat /tmp/digest.txt)"
+          echo "Pushed: $HARBOR_REGISTRY/$IMAGE_NAME@$DIGEST (tagged :$IMAGE_TAG)"
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      # ---------------------------------------------------------------
+      # Supply-chain security: 4 focused composites (OPS-701)
+      # Replaces: uses: ./.forgejo/actions/security-scan (monolithic)
+      #
+      # Order: scan → sign → attest → report
+      #   scan: produces sbom.cyclonedx.json + osv.json (consumed by attest + report)
+      #   sign: must succeed before attest (integrity before provenance)
+      #   attest: uses SBOM from scan; must succeed
+      #   report: non-fatal; always last; failure cannot block sign or attest
+      # ---------------------------------------------------------------
+
+      # scan: SBOM + OSV + language audit — non-fatal
+      - name: Scan (SBOM + OSV + language audit)
+        uses: ./.forgejo/actions/scan
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          language: none
+          source-dir: apps/sentinel-ops/build
+          hard-fail-on-critical: "false"
+
+      # sign: cosign sign (OCI 1.1 Referrers API, COSIGN_EXPERIMENTAL=1) — must-succeed
+      - name: Sign image
+        uses: ./.forgejo/actions/sign
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          cosign-key: ${{ secrets.COSIGN_KEY }}
+          cosign-password: ${{ secrets.COSIGN_PASSWORD || '' }}
+
+      # attest: SLSA v1.0 provenance + SBOM attestation — must-succeed (legacy .att tag)
+      - name: Attest (SLSA v1.0 + SBOM, legacy .att tag)
+        uses: ./.forgejo/actions/attest
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          cosign-key: ${{ secrets.COSIGN_KEY }}
+          cosign-password: ${{ secrets.COSIGN_PASSWORD || '' }}
+          sbom-file: sbom.cyclonedx.json
+
+      # report: DefectDojo upload — non-fatal (OPS-697: DNS context defect)
+      - name: Report to DefectDojo (non-fatal)
+        uses: ./.forgejo/actions/report
+        with:
+          image-ref: ${{ env.HARBOR_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          defectdojo-token: ${{ secrets.DEFECTDOJO_API_KEY }}
+          defectdojo-product-name: "Sentinel Ops Image"
+
+      # ---------------------------------------------------------------
+      # OPS-1121: Referrers-aware cryptographic cosign verify (replaces legacy .sig tag probe).
+      #
+      # The sign composite (OCI 1.1 Referrers API, COSIGN_EXPERIMENTAL=1) stores
+      # signatures as Referrers API accessories — NOT as sha256-<hex>.sig tags.
+      # The previous OPS-988 step probed for a .sig tag that never exists in
+      # Referrers mode, producing a false-fail (HTTP 404) on every build.
+      #
+      # Fix: use cosign verify directly against the image digest. cosign queries
+      # the OCI Referrers API to find the signature accessory and cryptographically
+      # verifies it against the platform public key.
+      #
+      # --insecure-ignore-tlog is REQUIRED: the platform signs with --tlog-upload=false
+      # (no Rekor transparency log). Without this flag cosign verify fails looking for
+      # a tlog entry that was never written. This is the correct posture for a
+      # private registry with a local key (no public Sigstore infrastructure).
+      #
+      # The public key (/etc/cosign/cosign.pub) is Ansible-provisioned on iac runners
+      # from Vault secret/cosign. This is a real cryptographic verify — strictly
+      # stronger than the former presence check.
+      # ---------------------------------------------------------------
+      - name: Verify cosign signature (OCI 1.1 Referrers cryptographic verify)
+        run: |
+          set -euo pipefail
+          DIGEST="${{ steps.push.outputs.digest }}"
+          echo "=== OPS-1121 verify: cosign cryptographic signature verification ==="
+          echo "Image: $HARBOR_REGISTRY/$IMAGE_NAME@${DIGEST}"
+          echo "Key: /etc/cosign/cosign.pub"
+          cosign verify \
+            --key /etc/cosign/cosign.pub \
+            --insecure-ignore-tlog \
+            "$HARBOR_REGISTRY/$IMAGE_NAME@${DIGEST}"
+          echo "PASS: cosign signature cryptographically verified (OCI 1.1 Referrers API)"
+
+      - name: Trivy scan (non-blocking)
+        run: |
+          trivy image --severity HIGH,CRITICAL --format table \
+            "$HARBOR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" || true
+
+      # Upload scan artifacts for audit trail (was step 8 in old composite).
+      - name: Upload security scan artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-scan-artifacts-${{ github.run_id }}
+          path: |
+            sbom.cyclonedx.json
+            osv.json
+            slsaprovenance.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # OPS-313 / OPS-1074: Auto-update the sentinel-ops cronjob image ref in this repo's manifest.
+      # Requires GITOPS_TOKEN Actions secret — a Forgejo PAT for sentinel-admin user
+      # (push_whitelist member for overwatch-gitops main).
+      # Vault: secret/forgejo-sentinel-admin (to be provisioned per OPS-313).
+      # No-op: exits 0 with no commit if image ref is already current in the manifest.
+      # Note: because this workflow is in overwatch-gitops itself, the clone-and-push
+      # loop writes back to the same repo. The build trigger path (apps/sentinel-ops/build/**)
+      # does not overlap with the manifest path (apps/sentinel-ops/cronjobs/**), so
+      # this update does not re-trigger the build workflow.
+      #
+      # OPS-1074: image-digest is now passed so update-gitops writes @sha256:<digest>
+      # (immutable reference) rather than :<tag> (mutable). The signed digest from the
+      # push step is the exact artifact that was signed above; writing it here means
+      # what runs in the cluster == what was signed.
+      - name: Update GitOps manifest (auto-deploy sentinel-ops)
+        uses: ./.forgejo/actions/update-gitops
+        with:
+          gitops-token: ${{ secrets.GITOPS_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tag: ${{ env.IMAGE_TAG }}
+          image-digest: ${{ steps.push.outputs.digest }}
+          deploy-file: ${{ env.GITOPS_DEPLOY_FILE }}
+
+      - name: Print image reference for sentinel-images.txt update
+        run: |
+          echo "====="
+          echo "Update ci/sentinel-images.txt in sentinel-iac with:"
+          echo "harbor.208.haist.farm/$IMAGE_NAME@${{ steps.push.outputs.digest }}  none"
+          echo "====="
+          echo "Kyverno verify-image-signatures will accept this image once the"
+          echo "cosign signature is present and verified (signed above with platform key, OCI 1.1 Referrers)."
+
+  gitleaks:
+    runs-on: iac
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks secret detection
+        run: |
+          gitleaks detect --source . --report-format json --report-path gitleaks-report.json --no-git
+          echo "No secrets detected."

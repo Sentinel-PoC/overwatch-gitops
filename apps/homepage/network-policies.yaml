@@ -1,0 +1,92 @@
+---
+# OPS-517: default-deny-all NetworkPolicy baseline for homepage namespace.
+# homepage is in the Istio mesh — traffic enters via istio-ingress/sentinel-gateway
+# (VirtualService + AuthorizationPolicy), NOT via the OKD HAProxy router.
+# Existing AuthorizationPolicy provides L7 deny-all; this adds complementary L4 enforcement.
+# Note: apps/mesh-config/allow-prometheus-istio-scrape.yaml owns the Prometheus scrape
+# policy for this namespace — it is additive and unaffected by this default-deny.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: homepage
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-homepage
+  namespace: homepage
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: homepage
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from Istio IngressGateway (istio-ingress/sentinel-gateway → homepage:3000)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-ingress
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # DNS resolution (CoreDNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# Istio sidecar xDS + cert sync egress (required for Istio-meshed pods)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-istio-control-plane
+  namespace: homepage
+  labels:
+    security.sentinel/layer: network-policy
+    app.kubernetes.io/part-of: istio
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # istiod (Pilot xDS, cert-manager, health)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - port: 15010
+          protocol: TCP
+        - port: 15012
+          protocol: TCP
+        - port: 15014
+          protocol: TCP
+    # Istio IngressGateway health check
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-ingress
+      ports:
+        - port: 15021
+          protocol: TCP

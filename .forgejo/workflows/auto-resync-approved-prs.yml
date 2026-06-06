@@ -1,0 +1,192 @@
+---
+# OPS-754: Scheduled auto-resync for approved PRs across all platform repos.
+#
+# Problem: When main receives new commits, open approved PRs fall behind.
+# Manual branch updates are serial busywork and re-trigger CI unnecessarily.
+#
+# Solution: Every 30 minutes, find approved PRs that are behind main and
+# call POST /pulls/{index}/update?style=merge to bring them current.
+#
+# Why style=merge (not rebase):
+#   On this Forgejo instance, merge-style updates preserve existing APPROVED
+#   reviews even when dismiss_stale_approvals: True is set. Rebase would
+#   create new commits that look like changes, potentially dismissing reviews.
+#
+# Why only APPROVED PRs:
+#   Un-approved PRs may be intentionally left behind — the author or a worker
+#   may be controlling when to update. Only merge-ready PRs auto-update.
+#
+# "Behind" detection:
+#   merge_base (Forgejo PR API) = the git common ancestor between the PR head
+#   and main. If merge_base == main HEAD, the PR already contains all of main.
+#   If they differ, the PR is behind and needs update.
+#   NOTE: pr.base.sha is NOT suitable — Forgejo computes it live as the current
+#   main HEAD, so it always equals MAIN_SHA regardless of actual branch state.
+#
+# Repos covered:
+#   sentinel-admin/overwatch-gitops
+#   sentinel-admin/sentinel-iac
+
+name: Auto-resync approved PRs
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  resync:
+    runs-on: iac
+    steps:
+      - name: Auto-resync approved PRs that are behind main
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          FORGEJO_URL="https://forgejo.208.haist.farm"
+
+          # Prefer FORGEJO_TOKEN (has cross-repo scope); fall back to github.token
+          # (only valid for this repo, but better than nothing for local ops).
+          TOKEN="${FORGEJO_TOKEN:-${GITHUB_TOKEN:-}}"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No auth token available — set FORGEJO_TOKEN secret"
+            exit 1
+          fi
+
+          REPOS=(
+            "sentinel-admin/overwatch-gitops"
+            "sentinel-admin/sentinel-iac"
+          )
+
+          TOTAL_UPDATED=0
+          TOTAL_SKIPPED=0
+          TOTAL_ERRORS=0
+
+          for REPO in "${REPOS[@]}"; do
+            echo ""
+            echo "=== Repo: ${REPO} ==="
+
+            # Get current main branch HEAD SHA
+            MAIN_SHA=$({ curl -sf \
+              -H "Authorization: token ${TOKEN}" \
+              "${FORGEJO_URL}/api/v1/repos/${REPO}/branches/main" \
+              2>/dev/null || echo "{}"; } | jq -r '.commit.id // empty')
+
+            if [ -z "$MAIN_SHA" ]; then
+              echo "::warning::Could not fetch main branch for ${REPO} — skipping repo"
+              TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+              continue
+            fi
+            echo "main HEAD: ${MAIN_SHA:0:8}"
+
+            # Paginate open PRs (limit 50 per page, max 10 pages = 500 PRs)
+            PAGE=1
+            REPO_UPDATED=0
+            REPO_SKIPPED=0
+
+            while true; do
+              PR_JSON=$(curl -sf \
+                -H "Authorization: token ${TOKEN}" \
+                "${FORGEJO_URL}/api/v1/repos/${REPO}/pulls?state=open&limit=50&page=${PAGE}" \
+                2>/dev/null || echo "[]")
+
+              PR_COUNT=$(echo "$PR_JSON" | jq 'length')
+              if [ "${PR_COUNT:-0}" -eq 0 ]; then
+                echo "(no more PRs on page ${PAGE})"
+                break
+              fi
+
+              echo "Page ${PAGE}: ${PR_COUNT} open PR(s)"
+
+              for i in $(seq 0 $((PR_COUNT - 1))); do
+                PR=$(echo "$PR_JSON" | jq -c ".[${i}]")
+                PR_NUM=$(echo "$PR" | jq -r '.number')
+                PR_TITLE=$(echo "$PR" | jq -r '.title // "untitled"' | cut -c1-70)
+                BASE_SHA=$(echo "$PR" | jq -r '.base.sha // empty')
+                MERGE_BASE=$(echo "$PR" | jq -r '.merge_base // empty')
+                PR_HEAD_SHA=$(echo "$PR" | jq -r '.head.sha // empty')
+
+                # Skip draft PRs
+                IS_DRAFT=$(echo "$PR" | jq -r '.draft // false')
+                if [ "$IS_DRAFT" = "true" ]; then
+                  echo "  PR #${PR_NUM}: draft — skipping"
+                  REPO_SKIPPED=$((REPO_SKIPPED + 1))
+                  continue
+                fi
+
+                # Check if behind: PR's merge_base must differ from current main HEAD.
+                # merge_base = stable git common ancestor between PR head and main.
+                # If it equals MAIN_SHA, the PR already has all of main merged in.
+                if [ "$MERGE_BASE" = "$MAIN_SHA" ]; then
+                  echo "  PR #${PR_NUM}: up-to-date — skip"
+                  REPO_SKIPPED=$((REPO_SKIPPED + 1))
+                  continue
+                fi
+
+                echo "  PR #${PR_NUM}: behind (merge_base ${MERGE_BASE:0:8} != main ${MAIN_SHA:0:8}) — ${PR_TITLE}"
+
+                # Check for at least one APPROVED review
+                APPROVED_COUNT=$(curl -sf \
+                  -H "Authorization: token ${TOKEN}" \
+                  "${FORGEJO_URL}/api/v1/repos/${REPO}/pulls/${PR_NUM}/reviews" \
+                  2>/dev/null \
+                  | jq '[.[] | select(.state == "APPROVED")] | length' \
+                  2>/dev/null || echo "0")
+
+                if [ "${APPROVED_COUNT:-0}" -lt 1 ]; then
+                  echo "    → no APPROVED reviews — not merge-ready, skipping"
+                  REPO_SKIPPED=$((REPO_SKIPPED + 1))
+                  continue
+                fi
+
+                echo "    → ${APPROVED_COUNT} APPROVED review(s) — triggering update"
+
+                # Update PR branch: merge main into head (style=merge preserves reviews)
+                # Note: -f is intentionally omitted so HTTP error codes (403, 409, etc.)
+                # are captured cleanly in HTTP_CODE via %{http_code} instead of causing
+                # curl to exit non-zero and the || echo "000" to produce "403000".
+                HTTP_CODE=$(curl -s \
+                  -o /tmp/pr-update-${PR_NUM}.json \
+                  -w "%{http_code}" \
+                  -X POST \
+                  -H "Authorization: token ${TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  -d '{"style": "merge"}' \
+                  "${FORGEJO_URL}/api/v1/repos/${REPO}/pulls/${PR_NUM}/update" \
+                  2>/dev/null || echo "000")
+
+                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "204" ]; then
+                  NEW_SHA=$(jq -r '.sha // "n/a"' /tmp/pr-update-${PR_NUM}.json 2>/dev/null || echo "n/a")
+                  echo "    [auto-resync] #${PR_NUM} updated — head ${PR_HEAD_SHA:0:8}→${NEW_SHA:0:8}"
+                  REPO_UPDATED=$((REPO_UPDATED + 1))
+                elif [ "$HTTP_CODE" = "409" ]; then
+                  echo "    ::warning::PR #${PR_NUM} has merge conflicts — cannot update"
+                  REPO_SKIPPED=$((REPO_SKIPPED + 1))
+                else
+                  echo "    ::warning::PR #${PR_NUM} update returned HTTP ${HTTP_CODE}"
+                  TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+                fi
+              done
+
+              PAGE=$((PAGE + 1))
+              [ "$PAGE" -gt 10 ] && { echo "::warning::Reached 10-page safety limit for ${REPO}"; break; }
+            done
+
+            echo "Repo ${REPO}: updated=${REPO_UPDATED} skipped=${REPO_SKIPPED}"
+            TOTAL_UPDATED=$((TOTAL_UPDATED + REPO_UPDATED))
+            TOTAL_SKIPPED=$((TOTAL_SKIPPED + REPO_SKIPPED))
+          done
+
+          echo ""
+          echo "=== Auto-resync complete ==="
+          echo "Total updated: ${TOTAL_UPDATED}"
+          echo "Total skipped: ${TOTAL_SKIPPED}"
+          echo "Total errors:  ${TOTAL_ERRORS}"
+
+          # Fail if errors encountered (non-fatal for zero errors, even if 0 updated)
+          if [ "${TOTAL_ERRORS}" -gt 0 ]; then
+            echo "::error::${TOTAL_ERRORS} error(s) encountered during resync"
+            exit 1
+          fi

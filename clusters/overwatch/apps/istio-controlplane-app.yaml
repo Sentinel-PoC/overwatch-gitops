@@ -1,0 +1,76 @@
+---
+# Istio + IstioCNI (Sail Operator) — ArgoCD-managed as of OPS-207 (2026-04-17).
+#
+# Previously this lived as a reference-only Application at
+# clusters/overwatch/service-mesh/istio-controlplane-reference.yaml,
+# applied manually because the AppProject's clusterResourceWhitelist did not
+# permit cluster-scoped sailoperator.io/Istio and IstioCNI resources. That
+# whitelist was patched in OPS-207 to include both kinds; this Application
+# now brings the Istio control plane into the standard GitOps reconciliation
+# loop.
+#
+# The Sail Operator itself is still installed via OLM (Subscription in
+# openshift-operators); ArgoCD manages only the Istio + IstioCNI CRs which
+# drive the operator.
+#
+# OPS-211 (2026-04-17): Namespace manifests for istio-system / istio-cni were
+# removed from the source path. The AppProject "default"
+# clusterResourceWhitelist does not include Namespace (and patching it was
+# out-of-scope for this issue), which caused "resource :Namespace is not
+# permitted in project default" on every sync and blocked the Istio / IstioCNI
+# CRs from reconciling. The namespaces already exist — they are created by the
+# cluster bootstrap path and labelled by the Sail Operator — so dropping them
+# from GitOps removes the block without changing runtime state. If an operator
+# ever wants Argo to own the namespaces, whitelist Namespace on AppProject
+# "default" first, then re-add the manifests.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-controlplane
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/istio-controlplane
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      # prune: false — deliberate. These are cluster-scoped CRs that drive the
+      # whole mesh. A disaster where git becomes empty should not delete them;
+      # an operator would revert git instead.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      # CreateNamespace retained as defence-in-depth even though we no longer
+      # ship Namespace manifests — CRs target existing namespaces only.
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    # .status is set by the Sail Operator as it reconciles; not something
+    # we ever want in git.
+    - group: sailoperator.io
+      kind: Istio
+      jsonPointers:
+        - /status
+    - group: sailoperator.io
+      kind: IstioCNI
+      jsonPointers:
+        - /status
+    # Sail Operator owns finalizers and any runtime-computed fields. Letting
+    # it retain ownership of fields it writes means future operator upgrades
+    # that add defaults won't show as drift until we explicitly adopt them.
+    - group: sailoperator.io
+      kind: Istio
+      managedFieldsManagers:
+        - istio-operator
+        - sail-operator
+    - group: sailoperator.io
+      kind: IstioCNI
+      managedFieldsManagers:
+        - istio-operator
+        - sail-operator

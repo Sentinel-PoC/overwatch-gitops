@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: homepage
+  description: Sentinel platform homepage and service dashboard
+  annotations:
+    backstage.io/kubernetes-label-selector: app=homepage
+    backstage.io/kubernetes-namespace: homepage
+    argocd/app-name: homepage
+  links:
+    - url: https://home.208.haist.farm
+      title: Homepage Dashboard
+      icon: dashboard
+  tags:
+    - dashboard
+    - application
+    - overwatch
+spec:
+  type: website
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

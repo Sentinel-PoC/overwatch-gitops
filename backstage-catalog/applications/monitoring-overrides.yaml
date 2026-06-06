@@ -1,0 +1,19 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: monitoring-overrides
+  description: OpenShift monitoring overrides — custom ClusterRole/RoleBinding for ArgoCD monitoring access and OVN overflow alert relabeling
+  annotations:
+    backstage.io/kubernetes-namespace: openshift-monitoring
+    argocd/app-name: monitoring-overrides
+  tags:
+    - monitoring
+    - platform
+    - configuration
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

@@ -1,0 +1,44 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: haists-website-dev
+  namespace: haists-website-dev
+---
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: haists-website-dev-anyuid
+# Explicit hardening (was previously relying on OKD-fill defaults which set
+# allowPrivilegeEscalation=true, prompting an ignoreDifferences mask — see SEC-33).
+allowPrivilegedContainer: false
+allowPrivilegeEscalation: false
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+groups: []
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret
+  - persistentVolumeClaim
+users:
+  - system:serviceaccount:haists-website-dev:haists-website-dev
+priority: 10

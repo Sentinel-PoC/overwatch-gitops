@@ -1,0 +1,24 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: forgejo-server
+  description: Forgejo git server hosting all project repositories (migrated from GitLab, OPS-16)
+  links:
+    - url: https://forgejo.208.haist.farm
+      title: Forgejo
+      icon: dashboard
+  tags:
+    - gitops
+    - source-control
+    - vm-service
+    - overwatch
+spec:
+  type: vm
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-pve
+  providesApis:
+    - forgejo-rest-api

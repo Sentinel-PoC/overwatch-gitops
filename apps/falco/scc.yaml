@@ -1,0 +1,45 @@
+# Falco requires privileged access for eBPF driver and /proc, /dev access.
+# OKD SCC admission ignores RBAC — SA must be in users field directly.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: falco-privileged
+  annotations:
+    kubernetes.io/description: >-
+      Privileged SCC for Falco runtime security monitoring.
+      Requires host PID, /proc, /dev, and eBPF access for syscall tracing.
+allowHostDirVolumePlugin: true
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: true
+allowHostPorts: false
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: true
+allowedCapabilities:
+  - SYS_ADMIN
+  - SYS_PTRACE
+  - SYS_RESOURCE
+defaultAddCapabilities: null
+requiredDropCapabilities: null
+fsGroup:
+  type: RunAsAny
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - '*'
+readOnlyRootFilesystem: false
+priority: null
+users:
+  - system:serviceaccount:falco-system:falco
+groups: []
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - hostPath
+  - projected
+  - secret

@@ -1,0 +1,225 @@
+langfuse:
+  nextauth:
+    url: https://langfuse.208.haist.farm
+    secret:
+      # OPS-110: was plaintext value — moved to Vault secret/langfuse/app.nextauth_secret
+      # ESO → Secret langfuse-app-creds key NEXTAUTH_SECRET
+      secretKeyRef:
+        name: langfuse-app-creds
+        key: NEXTAUTH_SECRET
+  salt:
+    # OPS-110: was plaintext value — moved to Vault secret/langfuse/app.salt
+    # ESO → Secret langfuse-app-creds key SALT
+    secretKeyRef:
+      name: langfuse-app-creds
+      key: SALT
+  encryptionKey:
+    # OPS-110: was plaintext value (and was incorrectly identical to nextauth.secret) —
+    # moved to Vault secret/langfuse/app.encryption_key (now independent random value)
+    # ESO → Secret langfuse-app-creds key ENCRYPTION_KEY
+    secretKeyRef:
+      name: langfuse-app-creds
+      key: ENCRYPTION_KEY
+  telemetryEnabled: false  # SEC-71: disable upstream PostHog telemetry (haist.farm domain fingerprint)
+  logging:
+    level: debug
+    format: text
+  image:
+    tag: 3.169.0
+    pullPolicy: IfNotPresent
+    pullSecrets:
+    - name: harbor-pull-secret
+  web:
+    image:
+      repository: harbor.208.haist.farm/sentinel/langfuse
+      tag: 3.169.0
+      pullPolicy: IfNotPresent
+  worker:
+    image:
+      repository: harbor.208.haist.farm/sentinel/langfuse-worker
+      tag: 3.169.0
+      pullPolicy: IfNotPresent
+  additionalEnv:
+  - name: LANGFUSE_INIT_ORG_ID
+    value: sentinel-ops
+  - name: LANGFUSE_INIT_ORG_NAME
+    value: Sentinel Operations
+  # SEC-72: deprecated Overwatch Agent Traces (pk-lf-186e70fa, 0 traces, no consumers).
+  # Init now points to existing Sentinel project (pk-lf-a36795a2) — idempotent, no new project created.
+  # Vault secret/langfuse/init updated 2026-05-20 to hold Sentinel keys.
+  # Pending: DELETE FROM api_keys WHERE public_key='pk-lf-186e70fa-475f-427a-bb84-1affea129283'
+  #          when PostgreSQL recovers from iSCSI I/O error.
+  - name: LANGFUSE_INIT_PROJECT_ID
+    value: sentinel
+  - name: LANGFUSE_INIT_PROJECT_NAME
+    value: Sentinel
+  # SEC-72: secret/langfuse/init now holds Sentinel project keys (pk-lf-a36795a2)
+  - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+    valueFrom:
+      secretKeyRef:
+        name: langfuse-init-creds
+        key: project_public_key
+  - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: langfuse-init-creds
+        key: project_secret_key
+  - name: LANGFUSE_INIT_USER_EMAIL
+    value: jim@haist.farm
+  - name: LANGFUSE_INIT_USER_NAME
+    value: Jim Haist
+  # OPS-110: was plaintext SentinelLangfuse2026! — moved to Vault secret/langfuse/init
+  - name: LANGFUSE_INIT_USER_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: langfuse-init-creds
+        key: user_password
+  # OPS-633: Authentik OIDC — additive alongside credentials auth (dual-running)
+  # AUTH_DISABLE_USERNAME_PASSWORD is intentionally NOT set; local login still works.
+  # Vault path: secret/authentik/clients/langfuse → ESO Secret langfuse-authentik-oidc
+  - name: AUTH_AUTHENTIK_CLIENT_ID
+    valueFrom:
+      secretKeyRef:
+        name: langfuse-authentik-oidc
+        key: AUTH_AUTHENTIK_CLIENT_ID
+  - name: AUTH_AUTHENTIK_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: langfuse-authentik-oidc
+        key: AUTH_AUTHENTIK_CLIENT_SECRET
+  # Issuer is a public URL, not a secret — slug matches Authentik application slug "langfuse"
+  - name: AUTH_AUTHENTIK_ISSUER
+    value: "https://auth-next.208.haist.farm/application/o/langfuse/"
+  extraInitContainers:
+  - name: wait-for-deps
+    image: harbor.208.haist.farm/sentinel/postgres@sha256:e0056c2601d99ba8f4700dee2c070fa237c2d364d8b051c820f2787e58e9ae5e
+    command:
+    - sh
+    - -c
+    - echo "Waiting for PG..."; until pg_isready -h langfuse-postgresql -p 5432 -U
+      langfuse 2>/dev/null; do sleep 3; done; echo "PG ready."; echo "Waiting for
+      CH..."; until wget -qO- http://langfuse-clickhouse:8123/ping 2>/dev/null | grep
+      -q Ok; do sleep 3; done; echo "CH ready."; echo "Waiting for Redis..."; until
+      nc -z langfuse-redis-primary 6379 2>/dev/null; do sleep 3; done; echo "Redis
+      ready."; echo "Waiting for S3 + bucket creation (30s)..."; until wget -qO- http://langfuse-s3:9000/minio/health/live
+      2>/dev/null; do sleep 3; done; sleep 30; echo "All dependencies ready!"
+postgresql:
+  auth:
+    username: langfuse
+    # OPS-110: was plaintext langfuse-pg-pass-change-me — moved to Vault secret/langfuse/postgresql
+    # ESO → Secret langfuse-pg-creds key 'password'
+    existingSecret: langfuse-pg-creds
+    secretKeys:
+      userPasswordKey: password
+      adminPasswordKey: password
+    database: postgres_langfuse
+  primary:
+    persistence:
+      enabled: false
+      storageClass: ''
+      size: 10Gi
+      volumeName: langfuse-pg-iscsi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  deploy: false
+  host: langfuse-postgresql
+  port: 5432
+clickhouse:
+  auth:
+    username: default
+    # OPS-110: was plaintext clickhouse-pass-change-me — Vault path secret/langfuse/clickhouse already
+    # existed from SEC-48 (ExternalSecret langfuse-clickhouse-creds already live). Password now rotated
+    # to strong random value (was placeholder). Helm chart now uses existingSecret to stop rendering
+    # langfuse-clickhouse Secret from values, letting ESO be sole source of truth.
+    existingSecret: langfuse-clickhouse-creds
+    existingSecretKey: CLICKHOUSE_PASSWORD
+  replicaCount: 1
+  persistence:
+    enabled: true
+    storageClass: ''
+    size: 10Gi
+    volumeName: langfuse-ch-iscsi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+  deploy: false
+  host: langfuse-clickhouse
+  httpPort: 8123
+  nativePort: 9000
+redis:
+  enabled: true
+  deploy: false
+  host: langfuse-redis-primary
+  port: 6379
+  auth:
+    # OPS-110: was plaintext redis-pass-change-me — moved to Vault secret/langfuse/redis
+    # ESO → Secret langfuse-redis-creds key 'password'
+    existingSecret: langfuse-redis-creds
+    existingSecretPasswordKey: password
+s3:
+  auth:
+    rootUser: langfuse-admin
+    # OPS-110: was plaintext minio-pass-change-me — moved to Vault secret/langfuse/s3
+    # ESO → Secret langfuse-s3-creds key 'root_password'
+    # Note: s3.deploy=false so s3.auth.existingSecret is not used by chart for deployment.
+    # The per-bucket secretAccessKey.secretKeyRef entries below wire the env vars for
+    # langfuse-web/worker. The raw langfuse-s3-deployment.yaml uses secretKeyRef directly.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  deploy: false
+  eventUpload:
+    bucket: langfuse-events
+    endpoint: http://langfuse-s3:9000
+    region: us-east-1
+    forcePathStyle: true
+    accessKeyId:
+      value: langfuse-admin
+    # OPS-110: was plaintext minio-pass-change-me
+    secretAccessKey:
+      secretKeyRef:
+        name: langfuse-s3-creds
+        key: root_password
+  mediaUpload:
+    bucket: langfuse-media
+    endpoint: http://langfuse-s3:9000
+    region: us-east-1
+    forcePathStyle: true
+    accessKeyId:
+      value: langfuse-admin
+    # OPS-110: was plaintext minio-pass-change-me
+    secretAccessKey:
+      secretKeyRef:
+        name: langfuse-s3-creds
+        key: root_password
+  batchExport:
+    enabled: false
+    bucket: langfuse-events
+    endpoint: http://langfuse-s3:9000
+    region: us-east-1
+    forcePathStyle: true
+    accessKeyId:
+      value: langfuse-admin
+    # OPS-110: was plaintext minio-pass-change-me
+    secretAccessKey:
+      secretKeyRef:
+        name: langfuse-s3-creds
+        key: root_password
+ingress:
+  enabled: false
+global:
+  imagePullSecrets:
+  - name: harbor-pull-secret

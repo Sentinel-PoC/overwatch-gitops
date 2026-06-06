@@ -1,0 +1,125 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-image-digest
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Replace=true
+    policies.kyverno.io/title: Require Image Digest
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      All container images must be referenced by an immutable @sha256: digest.
+      Mutable tags (e.g. :latest, :v1.2, :main) are disallowed because a tag can
+      be silently repointed to a different — potentially malicious — manifest.
+      System namespaces (kube-*, openshift-*) are excluded. Deployed in Audit
+      mode (SEC-102) as belt-and-suspenders to verifyDigest:true in
+      verify-image-signatures. Enforce flip is SEC-103 (operator go/no-go).
+      failurePolicy: Ignore preserved (fail-closed is SEC-104).
+      Maps to NIST 800-53 controls SI-7, CM-14, SA-12.
+      See SEC-87, SEC-101, SEC-102.
+spec:
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  background: true
+  webhookTimeoutSeconds: 10
+  rules:
+    - name: require-image-digest
+      # SEC-102 (2026-05-30): new policy — deny any Pod image that is not
+      # referenced by an immutable @sha256: digest. Belt-and-suspenders to
+      # verifyDigest:true in verify-image-signatures (SEC-101). Fleet is
+      # fully digest-pinned (OPS-1073/1074/1075 Done); expect zero violations.
+      # System namespaces excluded (same block as verify-image-signatures.yaml).
+      # Audit only at this stage — Enforce flip deferred to SEC-103.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - openshift
+                - openshift-apiserver
+                - openshift-apiserver-operator
+                - openshift-authentication
+                - openshift-authentication-operator
+                - openshift-cloud-controller-manager
+                - openshift-cloud-controller-manager-operator
+                - openshift-cloud-credential-operator
+                - openshift-cluster-csi-drivers
+                - openshift-cluster-machine-approver
+                - openshift-cluster-node-tuning-operator
+                - openshift-cluster-samples-operator
+                - openshift-cluster-storage-operator
+                - openshift-cluster-version
+                - openshift-config
+                - openshift-config-managed
+                - openshift-config-operator
+                - openshift-console
+                - openshift-console-operator
+                - openshift-console-user-settings
+                - openshift-controller-manager
+                - openshift-controller-manager-operator
+                - openshift-dns
+                - openshift-dns-operator
+                - openshift-etcd
+                - openshift-etcd-operator
+                - openshift-gitops
+                - openshift-image-registry
+                - openshift-infra
+                - openshift-ingress
+                - openshift-ingress-canary
+                - openshift-ingress-operator
+                - openshift-insights
+                - openshift-kube-apiserver
+                - openshift-kube-apiserver-operator
+                - openshift-kube-controller-manager
+                - openshift-kube-controller-manager-operator
+                - openshift-kube-scheduler
+                - openshift-kube-scheduler-operator
+                - openshift-kube-storage-version-migrator
+                - openshift-kube-storage-version-migrator-operator
+                - openshift-machine-api
+                - openshift-machine-config-operator
+                - openshift-marketplace
+                - openshift-monitoring
+                - openshift-multus
+                - openshift-network-diagnostics
+                - openshift-network-operator
+                - openshift-node
+                - openshift-oauth-apiserver
+                - openshift-openstack-infra
+                - openshift-operator-lifecycle-manager
+                - openshift-operators
+                - openshift-ovirt-infra
+                - openshift-route-controller-manager
+                - openshift-sdn
+                - openshift-service-ca
+                - openshift-service-ca-operator
+                - openshift-user-workload-monitoring
+                - openshift-vsphere-infra
+      validate:
+        message: >-
+          Images must be referenced by an immutable @sha256: digest.
+          Mutable tags (e.g. :latest) are not allowed. Use the form
+          registry/image@sha256:<hash> instead. SEC-102.
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.image }}"
+                    operator: NotEquals
+                    value: "*@sha256:*"
+          - list: "request.object.spec.initContainers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.image }}"
+                    operator: NotEquals
+                    value: "*@sha256:*"

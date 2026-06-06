@@ -1,0 +1,76 @@
+---
+# OPS-897 Phase B — KubeOperatorHighRestartCount PrometheusRule
+#
+# Context: During OPS-884, six cluster-operator pods were discovered in
+# CrashLoopBackOff for ~9 days (~1670 restarts each) with NO alert firing to
+# a human. Root cause was Alertmanager receivers being empty stubs (fixed in
+# OPS-897 Phase A). This rule adds a SECOND angle: detecting the restart
+# accumulation rate directly, complementing the existing KubePodCrashLooping
+# alert (which detects waiting_reason=CrashLoopBackOff).
+#
+# Metric: kube_pod_container_status_restarts_total
+# Labels confirmed live against this cluster's Prometheus:
+#   __name__, container, endpoint, job, namespace, pod, service, uid
+#
+# Threshold rationale:
+#   CrashLoopBackOff at maximum backoff (5-min interval) = ~3 restarts per
+#   15 minutes. Threshold of >3 catches pods restarting faster than the max
+#   backoff, i.e., an active and recent crash loop. No `for:` clause — fires
+#   immediately when the 15-min window shows >3 restarts so the operator is
+#   paged within one Prometheus evaluation cycle (~1 min) of the threshold
+#   being exceeded.
+#
+# Namespace scope: openshift-.* — covers all OKD system operator namespaces.
+# This deliberately includes non-operator workloads in openshift-* to catch
+# any cluster infrastructure pod, not just those in -operator-suffixed ns.
+#
+# Relation to existing rules:
+#   KubePodCrashLooping (kubernetes-apps group) — fires when pod has reason=
+#     CrashLoopBackOff in waiting status; uses max_over_time 15m window.
+#   ClusterOperatorDegraded (cluster-operators group) — fires when the
+#     ClusterOperator object itself reports Degraded=True.
+#   This rule — fires on rapid restart accumulation; catches pods not yet
+#     transitioned to CrashLoopBackOff status, or transiently recovering pods.
+#
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: overwatch-operator-restart-alerts
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/name: overwatch-operator-restart-alerts
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-897
+spec:
+  groups:
+    - name: overwatch.operator-health
+      interval: 1m
+      rules:
+
+        - alert: KubeOperatorHighRestartCount
+          expr: |
+            increase(
+              kube_pod_container_status_restarts_total{
+                namespace=~"openshift-.*"
+              }[15m]
+            ) > 3
+          labels:
+            severity: critical
+            team: ops
+            service: cluster-operators
+          annotations:
+            summary: >-
+              Cluster pod {{ $labels.pod }} ({{ $labels.namespace }}) restarting
+              rapidly
+            description: >-
+              Pod {{ $labels.pod }} container {{ $labels.container }} in namespace
+              {{ $labels.namespace }} has accumulated more than 3 restarts in the
+              past 15 minutes. This indicates an active crash loop on a cluster
+              infrastructure pod. CrashLoopBackOff at maximum backoff produces
+              ~3 restarts per 15 minutes; exceeding this threshold signals a pod
+              that has recently begun crashing or is not yet at max backoff.
+              Immediate actions: (1) oc get pod -n {{ $labels.namespace }} {{ $labels.pod }};
+              (2) oc logs -n {{ $labels.namespace }} {{ $labels.pod }} --previous;
+              (3) If operator pod: restart as first-step remediation per OPS-897 runbook.
+              Reference OPS-897 (6 operator pods CrashLoopBackOff 9 days undetected).
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/b08970e1-b91e-48fa-baa0-577b13b1ec63

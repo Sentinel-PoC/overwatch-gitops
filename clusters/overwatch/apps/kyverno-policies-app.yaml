@@ -1,0 +1,43 @@
+# Kyverno ClusterPolicies managed by ArgoCD.
+# Requires ClusterPolicy in AppProject clusterResourceWhitelist (appproject-default.yaml)
+# and clusterResources: true on the cluster secret.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/kyverno-policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      jqPathExpressions:
+        - .spec.rules[]?.skipBackgroundRequests
+        - .spec.rules[]?.validate.allowExistingViolations
+        - .spec.rules[] | select(.name|test("autogen-."))
+        - .spec.admission
+        - .spec.emitWarning
+        - .spec.webhookConfiguration
+        - .status
+      managedFieldsManagers:
+        - kyverno
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+      - RespectIgnoreDifferences=true
+      - Replace=true

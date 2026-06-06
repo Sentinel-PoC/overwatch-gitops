@@ -1,0 +1,61 @@
+---
+# ServiceAccounts for Scanopy components.
+# Daemon SA: bound to scanopy-daemon-privileged SCC via users[] in scc.yaml (OKD-native).
+# Server SA: bound to anyuid; container runs as uid=65534 (nobody) per SEC-122.
+# PostgreSQL SA: bound to anyuid; container runs as uid=70 (postgres) per SEC-122.
+# anyuid SCC is retained (allows specific non-root UIDs); a future PR can tighten
+# to nonroot SCC once the UID assignments are validated stable.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scanopy-daemon
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: daemon
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scanopy-server
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: server
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scanopy-postgresql
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: database
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scanopy-server-anyuid
+  namespace: scanopy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: scanopy-server
+    namespace: scanopy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scanopy-postgresql-anyuid
+  namespace: scanopy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: scanopy-postgresql
+    namespace: scanopy

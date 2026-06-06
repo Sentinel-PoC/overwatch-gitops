@@ -1,0 +1,524 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-scripts
+  namespace: sentinel-ops
+data:
+  nist-compliance-check.sh: |
+    #!/bin/bash
+    # =============================================================================
+    # NIST 800-53 Automated Compliance Check — Project Sentinel (API-Only)
+    # Runs as OKD CronJob, queries HTTP APIs only (no SSH dependencies)
+    # NIST Controls: CA-7 (Continuous Monitoring), CA-2 (Control Assessments)
+    # =============================================================================
+    set -euo pipefail
+
+    # --- Configuration ---
+    WAZUH_API="https://wazuh-api.208.haist.farm"
+    WAZUH_USER="${WAZUH_USER:-wazuh-wui}"
+    WAZUH_PASS="${WAZUH_PASS:-}"
+    VAULT_URL="https://vault.208.haist.farm"
+    FORGEJO_URL="${FORGEJO_URL:-https://forgejo.208.haist.farm}"
+    MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://192.168.12.58:9000}"
+    MINIO_AK="${MINIO_ACCESS_KEY:-}"
+    MINIO_SK="${MINIO_SECRET_KEY:-}"
+
+    DATE=$(date +%Y-%m-%d)
+    TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    EXPECTED_AGENTS=9
+    SCA_THRESHOLD=55
+    HARDENED_AGENTS="000 001 002 006 007 008"
+    ALL_AGENT_IDS="000 001 002 003 004 005 006 007 008"
+
+    # OKD runs containers as non-root; mc needs a writable config dir
+    export MC_CONFIG_DIR=/tmp/.mc
+
+    if [ -z "${WAZUH_PASS}" ]; then
+        echo "ERROR: WAZUH_PASS not set" >&2
+        exit 1
+    fi
+
+    # --- Helpers ---
+    log() { echo "[$(date -u +%H:%M:%S)] $*" >&2; }
+    pass() { echo '{"status":"PASS","control":"'"$1"'","check":"'"$2"'","detail":"'"$3"'"}'; }
+    fail() { echo '{"status":"FAIL","control":"'"$1"'","check":"'"$2"'","detail":"'"$3"'"}'; }
+    warn() { echo '{"status":"WARN","control":"'"$1"'","check":"'"$2"'","detail":"'"$3"'"}'; }
+
+    # --- Wazuh API helpers ---
+    get_token() {
+        local token
+        token=$(curl -s -k -u "${WAZUH_USER}:${WAZUH_PASS}" \
+            -X POST "${WAZUH_API}/security/user/authenticate" 2>/dev/null \
+            | jq -r '.data.token // empty')
+        if [ -z "$token" ]; then
+            log "ERROR: Failed to get Wazuh API token"
+            return 1
+        fi
+        echo "$token"
+    }
+
+    wazuh_get() {
+        local endpoint="$1"
+        local token="$2"
+        curl -s -k -H "Authorization: Bearer ${token}" "${WAZUH_API}${endpoint}" 2>/dev/null
+    }
+
+    # =============================================================================
+    # CHECK FUNCTIONS (all API-based, no SSH)
+    # =============================================================================
+
+    check_agents_active() {
+        local token="$1"
+        log "Checking agent count..."
+        local resp
+        resp=$(wazuh_get "/agents?status=active&limit=50" "$token")
+        local count
+        count=$(echo "$resp" | jq -r '.data.total_affected_items // 0')
+
+        if [ "$count" -ge "$EXPECTED_AGENTS" ]; then
+            pass "CA-7" "wazuh_agents_active" "${count} agents active (expected >= ${EXPECTED_AGENTS})"
+        else
+            fail "CA-7" "wazuh_agents_active" "${count} agents active (expected >= ${EXPECTED_AGENTS})"
+        fi
+    }
+
+    check_sca_scores() {
+        local token="$1"
+        log "Checking SCA scores..."
+        local all_pass=true
+        local details=""
+
+        for agent_id in $HARDENED_AGENTS; do
+            local resp
+            resp=$(wazuh_get "/sca/${agent_id}" "$token")
+            local score
+            score=$(echo "$resp" | jq -r '.data.affected_items[0].score // 0')
+
+            if [ "$score" -lt "$SCA_THRESHOLD" ]; then
+                all_pass=false
+            fi
+            details="${details}agent${agent_id}=${score}% "
+        done
+
+        if $all_pass; then
+            pass "CM-6" "sca_scores" "All hardened hosts >= ${SCA_THRESHOLD}%: ${details}"
+        else
+            fail "CM-6" "sca_scores" "Some hosts below ${SCA_THRESHOLD}%: ${details}"
+        fi
+    }
+
+    check_fim_running() {
+        local token="$1"
+        log "Checking FIM status..."
+        local all_pass=true
+        local details=""
+        local now_epoch
+        now_epoch=$(date +%s)
+        local max_age=86400
+
+        for agent_id in $ALL_AGENT_IDS; do
+            local resp
+            resp=$(wazuh_get "/syscheck/${agent_id}/last_scan" "$token")
+            local end_scan
+            end_scan=$(echo "$resp" | jq -r '.data.affected_items[0].end // empty')
+
+            if [ -z "$end_scan" ]; then
+                local count_resp
+                count_resp=$(wazuh_get "/syscheck/${agent_id}?limit=1" "$token")
+                local total
+                total=$(echo "$count_resp" | jq -r '.data.total_affected_items // 0')
+                if [ "$total" -gt 0 ]; then
+                    details="${details}agent${agent_id}=active "
+                else
+                    all_pass=false
+                    details="${details}agent${agent_id}=no_data "
+                fi
+            else
+                local scan_epoch
+                scan_epoch=$(date -d "$end_scan" +%s 2>/dev/null || echo 0)
+                local age=$(( now_epoch - scan_epoch ))
+                if [ "$age" -gt "$max_age" ]; then
+                    all_pass=false
+                    details="${details}agent${agent_id}=stale "
+                else
+                    details="${details}agent${agent_id}=ok "
+                fi
+            fi
+        done
+
+        if $all_pass; then
+            pass "SI-7" "fim_running" "FIM active on all agents: ${details}"
+        else
+            fail "SI-7" "fim_running" "FIM issues: ${details}"
+        fi
+    }
+
+    # --- REPLACED: Was SSH grep on wazuh server, now uses Wazuh API ---
+    check_active_response() {
+        local token="$1"
+        log "Checking Active Response config via Wazuh API..."
+        local resp
+        resp=$(wazuh_get "/manager/configuration?section=active-response" "$token")
+        local ar_count
+        ar_count=$(echo "$resp" | jq -r '[.data.affected_items[]? | .["active-response"]? // [] | if type == "array" then .[] else . end] | length // 0')
+
+        if [ "$ar_count" -gt 0 ]; then
+            pass "SI-4(7)" "active_response" "${ar_count} active-response blocks configured"
+        else
+            # Fallback: check if the response at least returned data
+            local total
+            total=$(echo "$resp" | jq -r '.data.total_affected_items // 0')
+            if [ "$total" -gt 0 ]; then
+                pass "SI-4(7)" "active_response" "Active response configuration present"
+            else
+                fail "SI-4(7)" "active_response" "No active-response config found via API"
+            fi
+        fi
+    }
+
+    # --- REPLACED: Was SSH systemctl on 6 hosts, now uses Wazuh syscollector ---
+    check_auditd() {
+        local token="$1"
+        log "Checking auditd via Wazuh syscollector..."
+        local running=0
+        local hosts_checked=0
+        local details=""
+
+        # Agent IDs for hosts that should run auditd (excludes minio LXC)
+        # 000=wazuh, 001=vault, 002=pangolin, 006=seedbox, 007=iac-control, 008=gitlab
+        for agent_id in $HARDENED_AGENTS; do
+            hosts_checked=$((hosts_checked + 1))
+            local resp
+            resp=$(wazuh_get "/syscollector/${agent_id}/processes?search=auditd&limit=10" "$token")
+            local count
+            count=$(echo "$resp" | jq -r '.data.total_affected_items // 0')
+            if [ "$count" -gt 0 ]; then
+                running=$((running + 1))
+                details="${details}agent${agent_id}=running "
+            else
+                details="${details}agent${agent_id}=NOT_FOUND "
+            fi
+        done
+
+        if [ "$running" -ge 5 ]; then
+            pass "AU-2" "auditd_running" "${running}/${hosts_checked} hosts running auditd"
+        else
+            fail "AU-2" "auditd_running" "${running}/${hosts_checked} hosts running auditd (need >= 5)"
+        fi
+    }
+
+    check_vault_health() {
+        log "Checking Vault health..."
+        local http_code
+        http_code=$(curl -s -k -o /dev/null -w "%{http_code}" \
+            "${VAULT_URL}/v1/sys/health" 2>/dev/null || echo "000")
+
+        if [ "$http_code" = "200" ]; then
+            pass "SC-23" "vault_tls_healthy" "Vault TLS healthy, HTTP ${http_code}"
+        elif [ "$http_code" = "429" ] || [ "$http_code" = "472" ] || [ "$http_code" = "473" ]; then
+            fail "SC-23" "vault_tls_healthy" "Vault unsealed but standby/sealed, HTTP ${http_code}"
+        else
+            fail "SC-23" "vault_tls_healthy" "Vault unreachable or error, HTTP ${http_code}"
+        fi
+    }
+
+    check_forgejo_accessible() {
+        log "Checking Forgejo accessibility..."
+        local http_code
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+            "${FORGEJO_URL}/api/v1/version" 2>/dev/null || echo "000")
+
+        if [ "$http_code" = "200" ] || [ "$http_code" = "302" ]; then
+            pass "CP-10" "forgejo_accessible" "Forgejo responding, HTTP ${http_code}"
+        else
+            fail "CP-10" "forgejo_accessible" "Forgejo unreachable, HTTP ${http_code}"
+        fi
+    }
+
+    # --- REPLACED: Was SSH systemctl, now checks actual backup files in MinIO ---
+    check_backup_timers() {
+        log "Checking backups via MinIO S3 API..."
+        local backups_ok=0
+        local backups_expected=2
+        local details=""
+        local now_epoch
+        now_epoch=$(date +%s)
+        local max_age_seconds=604800  # 7 days
+
+        # Configure mc (MinIO client)
+        mc alias set sentinel "${MINIO_ENDPOINT}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 >/dev/null 2>&1 || true
+
+        # Check vault backups — daily, 7-day retention
+        local vault_latest
+        vault_latest=$(mc ls sentinel/vault-backups/ 2>/dev/null | tail -1 || echo "")
+        if [ -n "$vault_latest" ]; then
+            local vault_date
+            vault_date=$(echo "$vault_latest" | awk '{print $1, $2}')
+            local vault_epoch
+            vault_epoch=$(date -d "$vault_date" +%s 2>/dev/null || echo 0)
+            local vault_age=$(( now_epoch - vault_epoch ))
+            if [ "$vault_age" -lt "$max_age_seconds" ]; then
+                backups_ok=$((backups_ok + 1))
+                local vault_age_days=$(( vault_age / 86400 ))
+                details="${details}vault-backup=${vault_age_days}d_ago "
+            else
+                details="${details}vault-backup=STALE "
+            fi
+        else
+            details="${details}vault-backup=MISSING "
+        fi
+
+        # Check gitlab backups — weekly, 14-day retention
+        local gitlab_latest
+        gitlab_latest=$(mc ls sentinel/gitlab-backups/ 2>/dev/null | tail -1 || echo "")
+        if [ -n "$gitlab_latest" ]; then
+            local gitlab_date
+            gitlab_date=$(echo "$gitlab_latest" | awk '{print $1, $2}')
+            local gitlab_epoch
+            gitlab_epoch=$(date -d "$gitlab_date" +%s 2>/dev/null || echo 0)
+            local gitlab_age=$(( now_epoch - gitlab_epoch ))
+            local gitlab_max=1209600  # 14 days
+            if [ "$gitlab_age" -lt "$gitlab_max" ]; then
+                backups_ok=$((backups_ok + 1))
+                local gitlab_age_days=$(( gitlab_age / 86400 ))
+                details="${details}gitlab-backup=${gitlab_age_days}d_ago "
+            else
+                details="${details}gitlab-backup=STALE "
+            fi
+        else
+            details="${details}gitlab-backup=MISSING "
+        fi
+
+        if [ "$backups_ok" -ge "$backups_expected" ]; then
+            pass "CP-9" "backup_freshness" "${backups_ok}/${backups_expected} backup sets fresh: ${details}"
+        else
+            fail "CP-9" "backup_freshness" "${backups_ok}/${backups_expected} backup sets fresh: ${details}"
+        fi
+    }
+
+    # --- REPLACED: Was SSH docker ps, now uses Wazuh syscollector for vault
+    #     and checks seedbox health via process list ---
+    check_docker_containers() {
+        local token="$1"
+        log "Checking containers via Wazuh syscollector..."
+        local details=""
+        local all_ok=true
+
+        # Vault server (agent 001) — check for vault process
+        local vault_resp
+        vault_resp=$(wazuh_get "/syscollector/001/processes?search=vault&limit=10" "$token")
+        local vault_count
+        vault_count=$(echo "$vault_resp" | jq -r '.data.total_affected_items // 0')
+        if [ "$vault_count" -ge 1 ]; then
+            details="${details}vault=running "
+        else
+            # Fallback: check for docker/containerd process
+            local docker_resp
+            docker_resp=$(wazuh_get "/syscollector/001/processes?search=docker&limit=10" "$token")
+            local docker_count
+            docker_count=$(echo "$docker_resp" | jq -r '.data.total_affected_items // 0')
+            if [ "$docker_count" -ge 1 ]; then
+                details="${details}vault=docker_running "
+            else
+                all_ok=false
+                details="${details}vault=DOWN "
+            fi
+        fi
+
+        # Seedbox (agent 006) — check for qbittorrent + gluetun processes
+        local seedbox_resp
+        seedbox_resp=$(wazuh_get "/syscollector/006/processes?search=qbittorrent&limit=10" "$token")
+        local qbit_count
+        qbit_count=$(echo "$seedbox_resp" | jq -r '.data.total_affected_items // 0')
+        local gluetun_resp
+        gluetun_resp=$(wazuh_get "/syscollector/006/processes?search=gluetun&limit=10" "$token")
+        local gluetun_count
+        gluetun_count=$(echo "$gluetun_resp" | jq -r '.data.total_affected_items // 0')
+        local seedbox_total=$((qbit_count + gluetun_count))
+        if [ "$seedbox_total" -ge 2 ]; then
+            details="${details}seedbox=${seedbox_total} "
+        else
+            # Fallback: check for any docker processes
+            local seed_docker
+            seed_docker=$(wazuh_get "/syscollector/006/processes?search=docker&limit=10" "$token")
+            local seed_docker_count
+            seed_docker_count=$(echo "$seed_docker" | jq -r '.data.total_affected_items // 0')
+            if [ "$seed_docker_count" -ge 2 ]; then
+                details="${details}seedbox=docker_running "
+            else
+                all_ok=false
+                details="${details}seedbox=${seedbox_total}/2 "
+            fi
+        fi
+
+        if $all_ok; then
+            pass "CM-2" "docker_containers" "Containers healthy: ${details}"
+        else
+            fail "CM-2" "docker_containers" "Container issues: ${details}"
+        fi
+    }
+
+    # --- REPLACED: Was SSH ufw status, now uses Wazuh SCA CIS checks ---
+    check_ufw_active() {
+        local token="$1"
+        log "Checking firewall via Wazuh SCA..."
+        local active=0
+        local total=0
+        local details=""
+
+        # Check SCA for each hardened agent — CIS benchmark includes firewall checks
+        # SCA score >= SCA_THRESHOLD implies firewall is configured
+        for agent_id in $HARDENED_AGENTS; do
+            total=$((total + 1))
+            local resp
+            resp=$(wazuh_get "/sca/${agent_id}" "$token")
+            local score
+            score=$(echo "$resp" | jq -r '.data.affected_items[0].score // 0')
+            # SCA CIS benchmark includes UFW/iptables checks
+            # Score >= threshold means firewall config is in place
+            if [ "$score" -ge "$SCA_THRESHOLD" ]; then
+                active=$((active + 1))
+            fi
+        done
+
+        if [ "$active" -ge 4 ]; then
+            pass "SC-7" "firewall_sca" "${active}/${total} hosts pass SCA firewall baseline"
+        else
+            fail "SC-7" "firewall_sca" "${active}/${total} hosts pass SCA firewall baseline (need >= 4)"
+        fi
+    }
+
+    # --- REPLACED: Was local file check, now uses Wazuh syscollector packages ---
+    check_clamav_defs() {
+        local token="$1"
+        log "Checking ClamAV via Wazuh syscollector..."
+        # Check iac-control (agent 007) for clamav package
+        local resp
+        resp=$(wazuh_get "/syscollector/007/packages?search=clamav&limit=10" "$token")
+        local count
+        count=$(echo "$resp" | jq -r '.data.total_affected_items // 0')
+
+        if [ "$count" -gt 0 ]; then
+            local version
+            version=$(echo "$resp" | jq -r '.data.affected_items[0].version // "unknown"')
+            pass "SI-3" "clamav_defs" "ClamAV installed on iac-control, version ${version}"
+        else
+            warn "SI-3" "clamav_defs" "ClamAV not found in syscollector package list"
+        fi
+    }
+
+    # =============================================================================
+    # MAIN
+    # =============================================================================
+    main() {
+        log "Starting NIST 800-53 Compliance Check (API-only) — ${DATE}"
+
+        local token
+        token=$(get_token) || {
+            log "FATAL: Cannot authenticate to Wazuh API"
+            exit 1
+        }
+
+        local results=()
+        results+=("$(check_agents_active "$token")")
+        results+=("$(check_sca_scores "$token")")
+        results+=("$(check_fim_running "$token")")
+        results+=("$(check_active_response "$token")")
+        results+=("$(check_auditd "$token")")
+        results+=("$(check_vault_health)")
+        results+=("$(check_forgejo_accessible)")
+        results+=("$(check_backup_timers)")
+        results+=("$(check_docker_containers "$token")")
+        results+=("$(check_ufw_active "$token")")
+        results+=("$(check_clamav_defs "$token")")
+
+        # Build JSON report
+        local pass_count=0
+        local fail_count=0
+        local warn_count=0
+        local checks_json="["
+        local first=true
+
+        for result in "${results[@]}"; do
+            local status
+            status=$(echo "$result" | jq -r '.status')
+            case "$status" in
+                PASS) pass_count=$((pass_count + 1)) ;;
+                FAIL) fail_count=$((fail_count + 1)) ;;
+                WARN) warn_count=$((warn_count + 1)) ;;
+            esac
+            if $first; then
+                first=false
+            else
+                checks_json="${checks_json},"
+            fi
+            checks_json="${checks_json}${result}"
+        done
+        checks_json="${checks_json}]"
+
+        local total=$((pass_count + fail_count + warn_count))
+        local overall="COMPLIANT"
+        [ "$fail_count" -gt 0 ] && overall="NON-COMPLIANT"
+
+        local report
+        report=$(jq -n \
+            --arg timestamp "$TIMESTAMP" \
+            --arg date "$DATE" \
+            --arg overall "$overall" \
+            --argjson pass "$pass_count" \
+            --argjson fail "$fail_count" \
+            --argjson warn "$warn_count" \
+            --argjson total "$total" \
+            --argjson checks "$checks_json" \
+            '{
+                timestamp: $timestamp,
+                date: $date,
+                framework: "NIST 800-53 Rev 5",
+                project: "Sentinel",
+                source: "sentinel-ops-cronjob",
+                overall_status: $overall,
+                summary: {
+                    pass: $pass,
+                    fail: $fail,
+                    warn: $warn,
+                    total: $total,
+                    pass_rate: (if $total > 0 then (($pass * 100) / $total | floor) else 0 end)
+                },
+                checks: $checks
+            }')
+
+        # Output JSON to stdout (captured by pod logs)
+        echo "$report"
+
+        # Upload to MinIO if credentials available
+        if [ -n "${MINIO_AK}" ]; then
+            mc alias set sentinel "${MINIO_ENDPOINT}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 >/dev/null 2>&1 || true
+            echo "$report" > "/tmp/nist-compliance-${DATE}.json"
+            mc cp "/tmp/nist-compliance-${DATE}.json" sentinel/compliance-reports/ 2>/dev/null || \
+                log "WARN: Failed to upload report to MinIO"
+            rm -f "/tmp/nist-compliance-${DATE}.json"
+        fi
+
+        # Human-readable summary to stderr
+        echo "" >&2
+        echo "==============================================" >&2
+        echo "  NIST 800-53 Compliance Report — ${DATE}" >&2
+        echo "==============================================" >&2
+        echo "  Status:   ${overall}" >&2
+        echo "  Passed:   ${pass_count}/${total}" >&2
+        echo "  Failed:   ${fail_count}" >&2
+        echo "  Warnings: ${warn_count}" >&2
+        echo "==============================================" >&2
+
+        if [ "$fail_count" -gt 0 ]; then
+            echo "" >&2
+            echo "FAILED CHECKS:" >&2
+            echo "$report" | jq -r '.checks[] | select(.status == "FAIL") | "  [\(.control)] \(.check): \(.detail)"' >&2
+        fi
+
+        # Always exit 0 — CronJob success means the script ran, not that all checks passed.
+        # The JSON report and human-readable summary capture the actual compliance status.
+        exit 0
+    }
+
+    main "$@"

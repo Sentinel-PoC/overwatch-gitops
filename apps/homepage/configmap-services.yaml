@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-services
+  namespace: homepage
+data:
+  services.yaml: |
+    - Infrastructure:
+        - Proxmox - pve:
+            href: https://pve.208.haist.farm
+            description: Primary Proxmox node (32 CPU, 62GB RAM)
+            icon: proxmox
+        - Proxmox - pve2:
+            href: https://pve2.208.haist.farm
+            description: Second Proxmox node (36 CPU, 125GB RAM)
+            icon: proxmox
+        - Proxmox - pve3:
+            href: https://pve3.208.haist.farm
+            description: Third Proxmox node (32 CPU, 125GB RAM)
+            icon: proxmox
+        - Config Server (HA):
+            description: HAProxy, dnsmasq, nginx, keepalived (HA backup)
+            icon: mdi-server-security
+        - NetBox:
+            href: https://netbox.208.haist.farm
+            description: IPAM and DCIM (network/datacenter management)
+            icon: mdi-network
+    - Platform:
+        - OKD Console:
+            href: https://console.208.haist.farm
+            description: OpenShift/OKD cluster console
+            icon: openshift
+        - ArgoCD:
+            href: https://argocd.208.haist.farm
+            description: GitOps continuous delivery
+            icon: argocd
+        - Grafana:
+            href: https://grafana.208.haist.farm
+            description: Monitoring dashboards
+            icon: grafana
+        - Keycloak:
+            href: https://auth.208.haist.farm
+            description: Identity provider (SSO)
+            icon: mdi-shield-key
+        - Keycloak (External):
+            href: https://auth.haist.farm
+            description: SSO — external access via Cloudflare
+            icon: mdi-shield-key-outline
+        - Kiali:
+            href: https://kiali.208.haist.farm
+            description: Istio service mesh console
+            icon: mdi-chart-timeline-variant
+        - Jaeger:
+            href: https://jaeger.208.haist.farm
+            description: Distributed tracing
+            icon: jaeger
+    - DevOps:
+        - Forgejo:
+            href: https://forgejo.208.haist.farm
+            description: Source control (Forgejo git server, migrated from GitLab)
+            icon: gitea
+        - Vault:
+            href: https://vault.208.haist.farm
+            description: Secrets management and JiT SSH
+            icon: vault
+        - MinIO:
+            href: https://minio.208.haist.farm
+            description: Object storage (S3-compatible)
+            icon: minio
+        - Harbor:
+            href: https://harbor.208.haist.farm
+            description: Container registry
+            icon: harbor
+        - Backstage:
+            href: https://backstage.208.haist.farm
+            description: Developer portal
+            icon: backstage
+    - Security:
+        - Overwatch Console:
+            href: https://console-sec.208.haist.farm
+            description: Security operations dashboard (SOC)
+            icon: mdi-monitor-dashboard
+        - Wazuh:
+            href: https://wazuh.208.haist.farm
+            description: SIEM — threat detection and compliance
+            icon: wazuh
+        - DefectDojo:
+            href: https://defectdojo.208.haist.farm
+            description: Vulnerability management
+            icon: mdi-shield-bug
+    - Media:
+        - Jellyfin:
+            href: https://jellyfin.208.haist.farm
+            description: Media server
+            icon: jellyfin
+        - qBittorrent:
+            href: https://seedbox.208.haist.farm
+            description: Torrent client (via gluetun VPN)
+            icon: qbittorrent

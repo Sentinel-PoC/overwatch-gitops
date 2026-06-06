@@ -1,0 +1,37 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: harbor-api
+  description: Harbor Container Registry API for image and project management
+  links:
+    - url: https://harbor.208.haist.farm
+      title: Harbor Registry
+      icon: dashboard
+  tags:
+    - registry
+    - container-images
+    - overwatch
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: Harbor API
+      version: "2.x"
+      description: Harbor container registry API with OIDC SSO
+    servers:
+      - url: https://harbor.208.haist.farm/api/v2.0
+    paths:
+      /projects:
+        get:
+          summary: List projects
+      /repositories:
+        get:
+          summary: List repositories
+      /health:
+        get:
+          summary: Health check

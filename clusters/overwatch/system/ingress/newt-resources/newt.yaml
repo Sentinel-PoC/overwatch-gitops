@@ -1,0 +1,160 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: newt-tunnel-newt-main-tunnel-ingress
+  labels:
+    app.kubernetes.io/name: newt
+    app.kubernetes.io/instance: newt-tunnel
+    app.kubernetes.io/version: 1.11.0
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: newt-1.1.0
+    newt.instance: main-tunnel
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: newt-tunnel
+      newt.instance: main-tunnel
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - port: 51820
+      protocol: UDP
+    - port: 51821
+      protocol: UDP
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: newt-tunnel-credentials
+  labels:
+    app.kubernetes.io/name: newt
+    app.kubernetes.io/instance: newt-tunnel
+    newt.instance: main-tunnel
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: vault-backend
+  target:
+    name: newt-tunnel-newt-main-tunnel
+    creationPolicy: Owner
+  data:
+    - secretKey: NEWT_SECRET
+      remoteRef:
+        key: newt
+        property: secret
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: newt-tunnel-newt-main-tunnel
+  labels:
+    app.kubernetes.io/name: newt
+    app.kubernetes.io/instance: newt-tunnel
+    app.kubernetes.io/version: 1.11.0
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: newt-1.1.0
+    app.kubernetes.io/component: newt
+    newt.instance: main-tunnel
+spec:
+  revisionHistoryLimit: 3
+  replicas: 0  # OPS-105: disabled — crashlooping, not in use
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: newt-tunnel
+      newt.instance: main-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: newt
+        app.kubernetes.io/component: newt
+        app.kubernetes.io/instance: newt-tunnel
+        newt.instance: main-tunnel
+      annotations:
+        sidecar.istio.io/inject: 'false'
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: newt
+        image: harbor.208.haist.farm/sentinel/newt:1.11.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: true
+          readOnlyRootFilesystem: false
+        env:
+        - name: PANGOLIN_ENDPOINT
+          value: https://app.pangolin.net
+        - name: NEWT_ID
+          value: ba4xgc9d0nf3lir
+        - name: NEWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: newt-tunnel-newt-main-tunnel
+              key: NEWT_SECRET
+        - name: LOG_LEVEL
+          value: INFO
+        - name: ACCEPT_CLIENTS
+          value: 'true'
+        - name: HEALTH_FILE
+          value: /tmp/healthy
+        ports:
+        - name: wg
+          containerPort: 51820
+          protocol: UDP
+        - name: tester
+          containerPort: 51821
+          protocol: UDP
+        livenessProbe:
+          exec:
+            command:
+            - test
+            - -f
+            - /tmp/healthy
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          exec:
+            command:
+            - test
+            - -f
+            - /tmp/healthy
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: 200m
+            ephemeral-storage: 256Mi
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            ephemeral-storage: 128Mi
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: newt-wireguard
+  namespace: pangolin-internal
+  labels:
+    app.kubernetes.io/name: newt
+    app.kubernetes.io/instance: newt-tunnel
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: newt-tunnel
+    newt.instance: main-tunnel
+  ports:
+  - name: wireguard
+    port: 51820
+    targetPort: 51820
+    protocol: UDP
+    nodePort: 31820
+  - name: wireguard-test
+    port: 51821
+    targetPort: 51821
+    protocol: UDP
+    nodePort: 31821

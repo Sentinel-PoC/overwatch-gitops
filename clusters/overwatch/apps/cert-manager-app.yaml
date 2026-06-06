@@ -1,0 +1,48 @@
+---
+# OPS-518 — cert-manager ArgoCD Application
+#
+# Deploys cert-manager via OLM (Community Operators).
+# Sync waves:
+#   wave 0 (default): Namespace, OperatorGroup, Subscription
+#   wave 2: ClusterIssuer (ClusterIssuer requires cert-manager CRDs from CSV)
+#
+# syncPolicy: automated but prune=false — OLM resources should not be pruned
+# automatically; CSV removal breaks in-use operators.
+#
+# SkipDryRunOnMissingResource: required because ClusterIssuer CRD does not exist
+# until the cert-manager CSV installs (the Subscription creates it).
+#
+# ignoreDifferences on Subscription: OLM mutates spec.startingCSV after first install;
+# ArgoCD must not revert this to avoid triggering reinstall loops.
+#
+# PREREQUISITE before first sync:
+#   - Run ansible/roles/vault-server/tasks/vault-cert-manager-role.yml (OPS-518)
+#     to create the Vault kubernetes/role/cert-manager
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: apps/cert-manager
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  ignoreDifferences:
+    - group: operators.coreos.com
+      kind: Subscription
+      name: cert-manager
+      jqPathExpressions:
+        - .spec.startingCSV
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true

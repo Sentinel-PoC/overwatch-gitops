@@ -1,0 +1,68 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: harbor
+  description: Container image registry with vulnerability scanning and OIDC SSO
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=harbor
+    backstage.io/kubernetes-namespace: harbor
+    argocd/app-name: harbor
+  links:
+    - url: https://harbor.208.haist.farm
+      title: Harbor Registry
+      icon: dashboard
+  tags:
+    - registry
+    - security
+    - container-images
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:keycloak
+    - component:harbor-postgresql
+    - component:harbor-redis
+  providesApis:
+    - harbor-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: harbor-postgresql
+  description: PostgreSQL database backend for Harbor container registry
+  annotations:
+    backstage.io/kubernetes-label-selector: app=postgresql
+    backstage.io/kubernetes-namespace: harbor
+    argocd/app-name: harbor
+  tags:
+    - database
+    - postgresql
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: harbor-redis
+  description: Redis cache backend for Harbor container registry
+  annotations:
+    backstage.io/kubernetes-label-selector: app=redis
+    backstage.io/kubernetes-namespace: harbor
+    argocd/app-name: harbor
+  tags:
+    - cache
+    - redis
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

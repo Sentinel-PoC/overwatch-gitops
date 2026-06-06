@@ -1,0 +1,18 @@
+---
+# OPS-808 — PVC bound to victorialogs-nfs-pv (NFS, TrueNAS)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victorialogs-data
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: victorialogs
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: victorialogs-nfs-pv
+  resources:
+    requests:
+      storage: 500Gi

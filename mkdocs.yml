@@ -1,0 +1,8 @@
+site_name: Overwatch GitOps
+site_description: GitOps manifests for the Overwatch OKD cluster
+nav:
+  - Home: index.md
+  - ArgoCD Applications: argocd-apps.md
+  - GitOps Workflow: gitops-workflow.md
+plugins:
+  - techdocs-core

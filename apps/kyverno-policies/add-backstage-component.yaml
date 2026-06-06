@@ -1,0 +1,43 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-backstage-component
+  annotations:
+    policies.kyverno.io/title: Add Backstage Component Annotation
+    policies.kyverno.io/category: Software Catalog
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      OPS-1182 Phase 2: mutate-to-comply for require-backstage-annotations.
+      Adds backstage.io/component to Deployment/StatefulSet workloads in the
+      chart-generated namespaces whose Helm charts do NOT expose workload-level
+      metadata annotations (goharbor/nfs-subdir/traefik only support pod-template
+      annotations; plane-ce StatefulSets cannot be SSA-patched — OPS-1185). The
+      value is the namespace, which is a REAL Backstage catalog component for each
+      of these (harbor, nfs-provisioner, pangolin-internal, plane — verified in
+      backstage-catalog/). Scoped to exactly these 4 namespaces so the value is
+      always a real component and blast radius is minimal; all other in-scope
+      namespaces already carry the annotation in their own manifests.
+spec:
+  # mutate-only policy: Enforce is correct (admission denied only if the mutation
+  # itself errors, ~never for a strategic-merge add). failurePolicy Ignore = fail-open.
+  validationFailureAction: Enforce
+  failurePolicy: Ignore
+  background: true
+  rules:
+    - name: add-component-on-admission
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+              namespaces:
+                - harbor
+                - nfs-provisioner
+                - pangolin-internal
+                - plane
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              +(backstage.io/component): "{{ request.namespace }}"

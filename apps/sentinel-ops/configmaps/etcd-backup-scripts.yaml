@@ -1,0 +1,403 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etcd-backup-scripts
+  namespace: sentinel-ops
+data:
+  etcd-backup.sh: |
+    #!/bin/bash
+    # etcd-backup.sh — k8s-API + etcdctl → envelope encrypt (Vault transit DEK + openssl AES) → MinIO etcd-backups
+    # NIST: CP-9, CP-9(1), CP-9(8), AC-6, CM-2, SI-7
+    # CP-9 separation: existing minio-replicate CronJob mirrors etcd-backups bucket
+    #   from MinIO primary (192.168.12.58) to MinIO replica (192.168.12.59).
+    # CP-9(8) encryption: envelope encryption pattern —
+    #   1. Generate random 256-bit local DEK (openssl rand)
+    #   2. Wrap DEK with Vault transit/encrypt (44-byte payload, safe for CLI)
+    #   3. Encrypt snapshot locally with AES-256-CBC using DEK
+    #   4. Upload: snapshot_TS.db.enc (ciphertext), snapshot_TS.db.enc.dek (wrapped key), snapshot_TS.db.enc.iv (IV)
+    # This avoids passing the full snapshot to vault CLI (ARG_MAX ~2MB, snapshot 50-500MB).
+    # OPS-241: dropped nsenter→cluster-backup.sh path. Now reads etcd client cert/key
+    #   and CA bundle directly from the openshift-etcd namespace via the k8s API
+    #   (cross-namespace get-only RBAC from OPS-240) and runs `etcdctl snapshot save`
+    #   against the in-cluster etcd Service. No hostPID, no privileged container,
+    #   no hostPath. AC-6 least privilege; CM-2 baseline-aligned hardening; SI-7
+    #   integrity preserved (snapshot magic verified by etcd-backup-verify.sh).
+    set -euo pipefail
+
+    VAULT_ADDR="${VAULT_ADDR:-https://vault.208.haist.farm}"
+    VAULT_K8S_ROLE="${VAULT_K8S_ROLE:-etcd-backup}"
+    VAULT_TRANSIT_KEY="${VAULT_TRANSIT_KEY:-etcd-backup}"
+    MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://192.168.12.58:9000}"
+    MINIO_AK="${MINIO_ACCESS_KEY:-}"
+    MINIO_SK="${MINIO_SECRET_KEY:-}"
+    MINIO_BUCKET="${MINIO_BUCKET:-etcd-backups}"
+
+    export MC_CONFIG_DIR=/tmp/.mc
+
+    log() { echo "[$(date -u +%H:%M:%S)] $*"; }
+
+    if [ -z "${VAULT_TOKEN:-}" ]; then
+        log "Authenticating to Vault (k8s role: ${VAULT_K8S_ROLE})..."
+        JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+            role="${VAULT_K8S_ROLE}" jwt="${JWT}")
+        if [ -z "${VAULT_TOKEN}" ]; then
+            log "FATAL: Vault auth returned empty token"
+            exit 1
+        fi
+        export VAULT_TOKEN
+        log "Vault auth OK"
+    else
+        log "VAULT_TOKEN present in env — skipping kubernetes-auth (workload-token path)"
+    fi
+
+    # OPS-241: Fetch etcd client cert/key and CA bundle via k8s API (cross-namespace
+    # read-only get scope per OPS-240 RBAC) and run etcdctl snapshot save against
+    # the in-cluster etcd Service. Replaces the previous nsenter→cluster-backup.sh
+    # path so the pod no longer needs hostPID, privileged, or any hostPath mounts.
+    log "Fetching etcd client cert/key + CA bundle from openshift-etcd via k8s API..."
+    KUBE_API="https://kubernetes.default.svc"
+    KUBE_CA="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    SA_TOKEN_FILE="/var/run/secrets/kubernetes.io/serviceaccount/token"
+    ETCD_NS="openshift-etcd"
+
+    K8S_TOKEN=$(cat "${SA_TOKEN_FILE}")
+    ETCD_CLIENT_JSON=$(curl -sf --cacert "${KUBE_CA}" -H "Authorization: Bearer ${K8S_TOKEN}" \
+        "${KUBE_API}/api/v1/namespaces/${ETCD_NS}/secrets/etcd-client")
+    echo "${ETCD_CLIENT_JSON}" | jq -r '.data."tls.crt"' | base64 -d > /tmp/etcd-client.crt
+    echo "${ETCD_CLIENT_JSON}" | jq -r '.data."tls.key"' | base64 -d > /tmp/etcd-client.key
+    chmod 0600 /tmp/etcd-client.key
+
+    ETCD_CA_JSON=$(curl -sf --cacert "${KUBE_CA}" -H "Authorization: Bearer ${K8S_TOKEN}" \
+        "${KUBE_API}/api/v1/namespaces/${ETCD_NS}/configmaps/etcd-ca-bundle")
+    echo "${ETCD_CA_JSON}" | jq -r '.data."ca-bundle.crt"' > /tmp/etcd-ca-bundle.crt
+
+    [ -s /tmp/etcd-client.crt ] && [ -s /tmp/etcd-client.key ] && [ -s /tmp/etcd-ca-bundle.crt ] || { log "FATAL: cert/key/ca missing"; exit 1; }
+
+    log "Running etcdctl snapshot save against https://etcd.openshift-etcd.svc:2379..."
+    SNAPSHOT="/tmp/snap.db"
+    ETCDCTL_API=3 etcdctl \
+        --endpoints=https://etcd.openshift-etcd.svc:2379 \
+        --cacert=/tmp/etcd-ca-bundle.crt --cert=/tmp/etcd-client.crt --key=/tmp/etcd-client.key \
+        --command-timeout=600s --dial-timeout=30s \
+        snapshot save "${SNAPSHOT}"
+
+    [ -s "${SNAPSHOT}" ] || { log "FATAL: snapshot empty"; exit 1; }
+
+    TS=$(date -u +%Y-%m-%d_%H%M%S)
+    SNAPSHOT_BASE="snapshot_${TS}.db"
+    KUBERESOURCES=""
+    log "Snapshot: ${SNAPSHOT_BASE} (TS=${TS}, $(wc -c < "${SNAPSHOT}") bytes)"
+
+    # Envelope encryption:
+    # Generate a random 256-bit DEK locally, wrap it with Vault transit/encrypt.
+    # The DEK plaintext (base64 of 32 bytes = 44 chars) is safe for shell CLI;
+    # only the small wrapped ciphertext is stored in MinIO alongside the data.
+    log "Generating local data encryption key (DEK) for envelope encryption..."
+    DEK_HEX=$(openssl rand -hex 32)
+    DEK_B64=$(python3 -c "import base64,sys; print(base64.b64encode(bytes.fromhex('${DEK_HEX}')).decode())")
+
+    log "Wrapping DEK with Vault transit/encrypt (${VAULT_TRANSIT_KEY} key, AES256-GCM96)..."
+    DEK_CIPHERTEXT=$(vault write -field=ciphertext "transit/encrypt/${VAULT_TRANSIT_KEY}" \
+        plaintext="${DEK_B64}")
+    log "DEK wrapped OK (ciphertext length: ${#DEK_CIPHERTEXT})"
+
+    # Generate random IV for AES-256-CBC
+    SNAP_IV_HEX=$(openssl rand -hex 16)
+
+    log "Encrypting snapshot locally (AES-256-CBC, openssl)..."
+    SNAP_ENC_FILE="/tmp/snapshot_${TS}.db.enc"
+    openssl enc -aes-256-cbc -nosalt -K "${DEK_HEX}" -iv "${SNAP_IV_HEX}" \
+        -in "${SNAPSHOT}" -out "${SNAP_ENC_FILE}"
+    log "Snapshot encrypted: $(wc -c < "${SNAP_ENC_FILE}") bytes"
+
+    # Write sidecar files for the wrapped DEK and IV
+    echo "${DEK_CIPHERTEXT}" > "/tmp/snapshot_${TS}.db.enc.dek"
+    echo "${SNAP_IV_HEX}" > "/tmp/snapshot_${TS}.db.enc.iv"
+
+    KR_ENC_FILE=""
+    if [ -n "${KUBERESOURCES}" ]; then
+        log "Encrypting kuberesources (separate IV, same wrapped DEK)..."
+        KR_IV_HEX=$(openssl rand -hex 16)
+        KR_ENC_FILE="/tmp/static_kuberesources_${TS}.tar.gz.enc"
+        openssl enc -aes-256-cbc -nosalt -K "${DEK_HEX}" -iv "${KR_IV_HEX}" \
+            -in "${KUBERESOURCES}" -out "${KR_ENC_FILE}"
+        echo "${DEK_CIPHERTEXT}" > "${KR_ENC_FILE}.dek"
+        echo "${KR_IV_HEX}" > "${KR_ENC_FILE}.iv"
+        log "KubeResources encrypted"
+    fi
+
+    log "Configuring mc alias..."
+    mc alias set primary "${MINIO_ENDPOINT}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 2>&1
+
+    log "Ensuring bucket exists: ${MINIO_BUCKET}..."
+    mc mb --ignore-existing "primary/${MINIO_BUCKET}" 2>&1 || true
+
+    log "Uploading snapshot_${TS}.db.enc and sidecars..."
+    mc cp "${SNAP_ENC_FILE}" "primary/${MINIO_BUCKET}/snapshot_${TS}.db.enc"
+    mc cp "/tmp/snapshot_${TS}.db.enc.dek" "primary/${MINIO_BUCKET}/snapshot_${TS}.db.enc.dek"
+    mc cp "/tmp/snapshot_${TS}.db.enc.iv" "primary/${MINIO_BUCKET}/snapshot_${TS}.db.enc.iv"
+    log "Uploaded snapshot_${TS}.db.enc + .dek + .iv"
+
+    if [ -n "${KR_ENC_FILE}" ] && [ -f "${KR_ENC_FILE}" ]; then
+        mc cp "${KR_ENC_FILE}" "primary/${MINIO_BUCKET}/static_kuberesources_${TS}.tar.gz.enc"
+        mc cp "${KR_ENC_FILE}.dek" "primary/${MINIO_BUCKET}/static_kuberesources_${TS}.tar.gz.enc.dek"
+        mc cp "${KR_ENC_FILE}.iv" "primary/${MINIO_BUCKET}/static_kuberesources_${TS}.tar.gz.enc.iv"
+        log "Uploaded static_kuberesources_${TS}.tar.gz.enc + .dek + .iv"
+    fi
+
+    rm -f "${SNAP_ENC_FILE}" \
+        "/tmp/snapshot_${TS}.db.enc.dek" "/tmp/snapshot_${TS}.db.enc.iv" \
+        "${KR_ENC_FILE}" "${KR_ENC_FILE}.dek" "${KR_ENC_FILE}.iv" 2>/dev/null || true
+    log "etcd-backup complete. TS=${TS}. Bucket=${MINIO_BUCKET}."
+
+  etcd-backup-verify.sh: |
+    #!/bin/bash
+    # etcd-backup-verify.sh — read-only verification: freshness + envelope decrypt round-trip + replica
+    # NIST: CP-9, CP-9(1), CM-3(2)
+    # Called by etcd-backup-verify CronJob (recurring) and bootstrap Job (one-shot gate).
+    # Read-only: mc cat streams object content (no MinIO write).
+    # vault transit/decrypt only (DEK unwrap — small payload, safe for CLI).
+    #
+    # Envelope encryption format:
+    #   snapshot_TS.db.enc     — AES-256-CBC encrypted snapshot (openssl, -nosalt)
+    #   snapshot_TS.db.enc.dek — Vault transit ciphertext of the 256-bit DEK
+    #   snapshot_TS.db.enc.iv  — hex AES IV (32 hex chars = 16 bytes)
+    #
+    # Etcd snapshot format: bbolt (github.com/etcd-io/bbolt), NOT SQLite.
+    # Magic 0xED0CDAED (uint32, little-endian) at file offset 16 (after 16-byte page header).
+    # On-disk bytes at offset 16-19: ed da 0c ed
+    #
+    # Exit 0 = PASS with structured stdout; exit non-zero = FAIL with stderr.
+    set -euo pipefail
+
+    VAULT_ADDR="${VAULT_ADDR:-https://vault.208.haist.farm}"
+    VAULT_K8S_ROLE="${VAULT_K8S_ROLE:-etcd-backup}"
+    VAULT_TRANSIT_KEY="${VAULT_TRANSIT_KEY:-etcd-backup}"
+    MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://192.168.12.58:9000}"
+    MINIO_REPLICA="${MINIO_REPLICA-http://192.168.12.59:9000}"
+    MINIO_AK="${MINIO_ACCESS_KEY:-}"
+    MINIO_SK="${MINIO_SECRET_KEY:-}"
+    MINIO_BUCKET="${MINIO_BUCKET:-etcd-backups}"
+    MAX_AGE_PRIMARY_SEC=25200
+    MAX_AGE_REPLICA_SEC=28800
+
+    export MC_CONFIG_DIR=/tmp/.mc
+
+    log()  { echo "[$(date -u +%H:%M:%S)] $*"; }
+    fail() { echo "FAIL: $*" >&2; exit 1; }
+
+    if [ -z "${VAULT_TOKEN:-}" ]; then
+        log "Authenticating to Vault (role: ${VAULT_K8S_ROLE})..."
+        JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login role="${VAULT_K8S_ROLE}" jwt="${JWT}")
+        [ -z "${VAULT_TOKEN}" ] && fail "Vault auth returned empty token"
+        export VAULT_TOKEN
+        log "Vault auth OK"
+    else
+        log "VAULT_TOKEN present in env — skipping kubernetes-auth (workload-token path)"
+    fi
+
+    mc alias set primary "${MINIO_ENDPOINT}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 2>/dev/null
+    [ -n "${MINIO_REPLICA}" ] && mc alias set replica "${MINIO_REPLICA}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 2>/dev/null
+
+    log "Listing primary/${MINIO_BUCKET}..."
+    LATEST_KEY=$(mc ls "primary/${MINIO_BUCKET}/" --json 2>/dev/null \
+        | jq -r 'select(.key | startswith("snapshot_")) | select(.key | endswith(".enc")) | .key' \
+        | sort -r | head -1)
+    [ -z "${LATEST_KEY}" ] && fail "No snapshot found in primary/${MINIO_BUCKET}"
+
+    LATEST_MTIME=$(mc stat "primary/${MINIO_BUCKET}/${LATEST_KEY}" --json 2>/dev/null \
+        | jq -r '.lastModified // .last_modified // .["Last-Modified"] // .LastModified // empty' \
+        | head -1)
+    [ -z "${LATEST_MTIME}" ] && fail "Cannot stat ${LATEST_KEY} on primary"
+    log "Latest snapshot: ${LATEST_KEY} (mtime=${LATEST_MTIME})"
+
+    NOW_EPOCH=$(date -u +%s)
+    SNAP_EPOCH=$(python3 -c "import datetime; s='${LATEST_MTIME}'.replace('Z','+00:00'); print(int(datetime.datetime.fromisoformat(s).timestamp()))")
+    AGE_SEC=$((NOW_EPOCH - SNAP_EPOCH))
+    if [ "${AGE_SEC}" -gt "${MAX_AGE_PRIMARY_SEC}" ]; then
+        fail "Snapshot ${LATEST_KEY} is ${AGE_SEC}s old (limit ${MAX_AGE_PRIMARY_SEC}s). Backup may have missed a cycle."
+    fi
+    log "Snapshot age: ${AGE_SEC}s (within ${MAX_AGE_PRIMARY_SEC}s) — OK"
+
+    # Envelope decrypt round-trip:
+    # 1. Fetch wrapped DEK and IV from MinIO sidecars (small objects, safe for CLI)
+    # 2. Unwrap DEK via Vault transit/decrypt (short ciphertext payload)
+    # 3. Decrypt snapshot locally with openssl — writes to tmpfile (no large CLI args)
+    # 4. Check bbolt magic on decrypted bytes
+    log "Fetching envelope key material (${LATEST_KEY}.dek and .iv)..."
+    DEK_CIPHERTEXT=$(mc cat "primary/${MINIO_BUCKET}/${LATEST_KEY}.dek" 2>/dev/null | tr -d '\n') \
+        || fail "mc cat failed for ${LATEST_KEY}.dek"
+    [ -z "${DEK_CIPHERTEXT}" ] && fail "Wrapped DEK is empty for ${LATEST_KEY}.dek"
+
+    IV_HEX=$(mc cat "primary/${MINIO_BUCKET}/${LATEST_KEY}.iv" 2>/dev/null | tr -d '\n') \
+        || fail "mc cat failed for ${LATEST_KEY}.iv"
+    [ -z "${IV_HEX}" ] && fail "IV is empty for ${LATEST_KEY}.iv"
+
+    log "Unwrapping DEK via Vault transit/decrypt (small payload)..."
+    DEK_PLAINTEXT_B64=$(vault write -field=plaintext "transit/decrypt/${VAULT_TRANSIT_KEY}" \
+        ciphertext="${DEK_CIPHERTEXT}" 2>/dev/null) \
+        || fail "Vault transit decrypt (DEK unwrap) failed"
+    [ -z "${DEK_PLAINTEXT_B64}" ] && fail "DEK unwrap returned empty plaintext"
+
+    DEK_HEX=$(echo "${DEK_PLAINTEXT_B64}" | base64 -d | python3 -c "import sys; print(sys.stdin.buffer.read().hex())")
+
+    log "Decrypting snapshot locally (openssl AES-256-CBC, read-only)..."
+    mc cat "primary/${MINIO_BUCKET}/${LATEST_KEY}" 2>/dev/null \
+        | openssl enc -d -aes-256-cbc -nosalt -K "${DEK_HEX}" -iv "${IV_HEX}" \
+        > /tmp/etcd_verify_decrypted.db \
+        || fail "openssl decrypt failed for ${LATEST_KEY}"
+
+    DECRYPT_BYTES=$(wc -c < /tmp/etcd_verify_decrypted.db)
+    [ "${DECRYPT_BYTES}" -eq 0 ] && fail "Decrypted snapshot is zero bytes"
+
+    MAGIC_OK=$(python3 -c "
+    with open('/tmp/etcd_verify_decrypted.db', 'rb') as f:
+        d = f.read(20)
+    print('OK' if len(d)>=20 and int.from_bytes(d[16:20],'little')==0xED0CDAED else 'FAIL:'+d[16:20].hex() if len(d)>=20 else 'FAIL:short')
+    ")
+    rm -f /tmp/etcd_verify_decrypted.db
+    [ "${MAGIC_OK}" != "OK" ] && fail "bbolt magic check failed (${MAGIC_OK}). Decrypted content may be corrupt."
+    log "bbolt magic OK (0xED0CDAED at offset 16). Decrypt bytes: ${DECRYPT_BYTES}"
+
+    if [ -n "${MINIO_REPLICA}" ]; then
+        log "Checking replica for ${LATEST_KEY}..."
+        REPLICA_MTIME=$(mc stat "replica/${MINIO_BUCKET}/${LATEST_KEY}" --json 2>/dev/null \
+            | jq -r '.lastModified // .last_modified // .["Last-Modified"] // .LastModified // empty' 2>/dev/null \
+            | head -1 || true)
+        [ -z "${REPLICA_MTIME}" ] && fail "${LATEST_KEY} not found on replica (${MINIO_REPLICA}). Replication may be lagging."
+
+        REPLICA_EPOCH=$(python3 -c "import datetime; s='${REPLICA_MTIME}'.replace('Z','+00:00'); print(int(datetime.datetime.fromisoformat(s).timestamp()))")
+        REPLICA_AGE_SEC=$((NOW_EPOCH - REPLICA_EPOCH))
+        if [ "${REPLICA_AGE_SEC}" -gt "${MAX_AGE_REPLICA_SEC}" ]; then
+            fail "Replica snapshot is ${REPLICA_AGE_SEC}s old (limit ${MAX_AGE_REPLICA_SEC}s). Replication lag too high."
+        fi
+
+        REPLICA_LAG_SEC=$((REPLICA_EPOCH - SNAP_EPOCH))
+        [ "${REPLICA_LAG_SEC}" -lt 0 ] && REPLICA_LAG_SEC=0
+        log "Replica OK: age=${REPLICA_AGE_SEC}s, lag=${REPLICA_LAG_SEC}s"
+    else
+        REPLICA_LAG_SEC=0
+        log "Replica check skipped (MINIO_REPLICA not set)"
+    fi
+
+    echo "RESULT=PASS"
+    echo "LATEST_SNAPSHOT=${LATEST_KEY}"
+    echo "DECRYPT_BYTES=${DECRYPT_BYTES}"
+    echo "SNAPSHOT_AGE_SEC=${AGE_SEC}"
+    echo "REPLICA_LAG_SEC=${REPLICA_LAG_SEC}"
+
+  etcd-backup-verify-bootstrap.sh: |
+    #!/bin/bash
+    # etcd-backup-verify-bootstrap.sh — one-shot post-merge gate for OPS-183
+    # Polls for a fresh snapshot (within 30min), runs etcd-backup-verify.sh,
+    # posts structured result to Plane OPS-183, transitions to Done on PASS.
+    # On FAIL: posts FAIL comment, exits non-zero (OPS-183 stays open).
+    # Plane API called ONLY from this bootstrap script, never from recurring CronJob.
+    # Uses curl+jq for Plane API calls (avoids multi-line Python in YAML block scalar).
+    set -euo pipefail
+
+    PLANE_API_KEY="${PLANE_API_KEY:-}"
+    PLANE_BASE="https://plane.208.haist.farm/api/v1"
+    PLANE_WS="haists-it-consulting"
+    PLANE_PROJ="223c0b66-4255-406e-932f-3b50c0e93543"
+    PLANE_ISSUE="4496120c-7fe3-4223-89d8-24486dd787d2"
+    PLANE_DONE="6c1064e1-8daa-4d29-a458-a4f10aa5e35f"
+    PLANE_ISSUES_URL="${PLANE_BASE}/workspaces/${PLANE_WS}/projects/${PLANE_PROJ}/issues"
+
+    MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://192.168.12.58:9000}"
+    MINIO_AK="${MINIO_ACCESS_KEY:-}"
+    MINIO_SK="${MINIO_SECRET_KEY:-}"
+    MINIO_BUCKET="etcd-backups"
+    POLL_MAX=400
+    POLL_WINDOW_SEC=1800
+    POLL_INTERVAL_SEC=60
+
+    export MC_CONFIG_DIR=/tmp/.mc
+
+    log() { echo "[$(date -u +%H:%M:%S)] $*"; }
+
+    plane_comment() {
+        local html="$1"
+        local payload
+        payload=$(jq -n --arg h "${html}" '{"comment_html": $h}')
+        curl -sf --request POST \
+            --header "x-api-key: ${PLANE_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "${payload}" \
+            "${PLANE_ISSUES_URL}/${PLANE_ISSUE}/comments/" \
+            >/dev/null 2>&1 || log "WARN: Plane comment POST failed"
+    }
+
+    plane_close() {
+        curl -sf --request PATCH \
+            --header "x-api-key: ${PLANE_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "{\"state\": \"${PLANE_DONE}\"}" \
+            "${PLANE_ISSUES_URL}/${PLANE_ISSUE}/" \
+            >/dev/null 2>&1 || log "WARN: Plane state PATCH failed"
+    }
+
+    [ -z "${PLANE_API_KEY}" ] && { log "FATAL: PLANE_API_KEY not set (check ops-plane-creds ExternalSecret)"; exit 1; }
+
+    log "Polling for fresh snapshot in primary/${MINIO_BUCKET} (max ${POLL_MAX}x${POLL_INTERVAL_SEC}s)..."
+    mc alias set primary "${MINIO_ENDPOINT}" "${MINIO_AK}" "${MINIO_SK}" --api s3v4 2>/dev/null
+
+    POLL_COUNT=0
+    FRESH_FOUND=0
+    while [ "${POLL_COUNT}" -lt "${POLL_MAX}" ]; do
+        FRESH_FOUND=$(mc ls "primary/${MINIO_BUCKET}/" --json 2>/dev/null \
+            | jq -r 'select(.key | startswith("snapshot_")) | select(.key | endswith(".enc")) | (.lastModified // .last_modified // .["Last-Modified"] // .LastModified // empty)' \
+            | python3 -c "import sys,datetime; now=datetime.datetime.now(datetime.timezone.utc); found=any((now-datetime.datetime.fromisoformat(l.strip().replace('Z','+00:00'))).total_seconds()<${POLL_WINDOW_SEC} for l in sys.stdin if l.strip()); print('1' if found else '0')" \
+            2>/dev/null || echo "0")
+        if [ "${FRESH_FOUND}" = "1" ]; then
+            log "Fresh snapshot found (within last ${POLL_WINDOW_SEC}s)"
+            break
+        fi
+        POLL_COUNT=$((POLL_COUNT + 1))
+        log "No fresh snapshot yet (attempt ${POLL_COUNT}/${POLL_MAX}). Sleeping ${POLL_INTERVAL_SEC}s..."
+        sleep "${POLL_INTERVAL_SEC}"
+    done
+
+    if [ "${FRESH_FOUND}" != "1" ]; then
+        MSG="Timed out after ${POLL_MAX} attempts. No fresh snapshot in primary/${MINIO_BUCKET} within last ${POLL_WINDOW_SEC}s."
+        log "FAIL: ${MSG}"
+        plane_comment "<p><strong>FAIL</strong> — etcd-backup-verify-bootstrap timed out<br>${MSG}</p>"
+        exit 1
+    fi
+
+    log "Running verify (with retry loop for replication lag)..."
+    VERIFY_RC=1
+    for attempt in $(seq 1 20); do
+        if bash /opt/etcd-backup/etcd-backup-verify.sh > /tmp/verify.out 2>&1; then
+            VERIFY_RC=0
+            cat /tmp/verify.out
+            break
+        fi
+        if [ "$attempt" -lt 20 ]; then
+            log "verify attempt $attempt failed (likely replication lag), sleeping 60s..."
+            sleep 60
+        else
+            log "verify exhausted 20 attempts (20min retry window) — final failure:"
+            cat /tmp/verify.out >&2
+        fi
+    done
+    if [ "${VERIFY_RC}" -ne 0 ]; then
+        log "Verification FAILED after 20 attempts"
+        VERIFY_OUT=$(cat /tmp/verify.out 2>/dev/null || true)
+        plane_comment "<p><strong>FAIL</strong> — etcd-backup-verify-bootstrap: verify failed after 20 attempts (replication lag window exhausted)<br><pre>${VERIFY_OUT}</pre></p>"
+        exit 1
+    fi
+    VERIFY_OUT=$(cat /tmp/verify.out)
+
+    LATEST_SNAP=$(echo "${VERIFY_OUT}" | grep '^LATEST_SNAPSHOT=' | cut -d= -f2)
+    DBYTES=$(echo "${VERIFY_OUT}"      | grep '^DECRYPT_BYTES='   | cut -d= -f2)
+    AGE=$(echo "${VERIFY_OUT}"         | grep '^SNAPSHOT_AGE_SEC=' | cut -d= -f2)
+    LAG=$(echo "${VERIFY_OUT}"         | grep '^REPLICA_LAG_SEC=' | cut -d= -f2)
+    TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    plane_comment "<p><strong>VERIFICATION PASS</strong> — etcd-backup-verify-bootstrap (OPS-185)<br><strong>Timestamp:</strong> ${TS}<br><br>RESULT=PASS<br>LATEST_SNAPSHOT=${LATEST_SNAP}<br>DECRYPT_BYTES=${DBYTES}<br>SNAPSHOT_AGE_SEC=${AGE}<br>REPLICA_LAG_SEC=${LAG}<br><br>Checks: snapshot freshness (primary &lt;7h), envelope decrypt round-trip (Vault DEK unwrap + openssl AES-256-CBC), bbolt magic 0xED0CDAED at offset 16, replica presence+age (&lt;8h).<br>Transitioning OPS-183 to Done.</p>"
+
+    plane_close
+    log "OPS-183 closed. Bootstrap verification complete."

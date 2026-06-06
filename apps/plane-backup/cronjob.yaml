@@ -1,0 +1,122 @@
+# OPS-481: Plane PostgreSQL backup CronJob (Phase 1 of 4 — COMP-3 gap 1).
+#
+# Design:
+#   Init container: postgres:16.13-alpine3.23 — pg_dump directly to plane-postgresql
+#     Service (TCP 5432, no kubectl exec needed).
+#     Output: /backup/plane-<TIMESTAMP>.dump (custom format = zlib-compressed binary).
+#     NOTE: pg_dump --format=custom already uses zlib compression internally; no
+#     additional gzip pipe is applied (double-compression wastes CPU, grows files).
+#   Main container: mc:latest — uploads dump to MinIO plane-backups bucket (.58).
+#     Both containers share an emptyDir volume for the dump file.
+#
+# Credentials: envFrom plane-backup-config (ExternalSecret) provides:
+#   PGPASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET
+#
+# Cadence: hourly — per OPS-481 requirement (Plane = issue tracker, audit trail).
+# Retention: MinIO lifecycle policy not set here; operator sets bucket lifecycle if needed.
+#
+# COMP-3 controls: CP-9 (system backup), CP-9(1) (separation of primary + backup storage).
+# Primary: TrueNAS .205 (PostgreSQL PVC). Backup: MinIO .58 (different hardware).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: plane-backup
+  namespace: plane-backup
+  labels:
+    app: plane-backup
+  annotations:
+    compliance.sentinel/controls: "CP-9,CP-9(1)"
+    compliance.sentinel/description: >
+      Hourly pg_dump of Plane PostgreSQL to MinIO .58 (OPS-481).
+      Separate hardware from TrueNAS primary storage (CP-9(1) separation).
+spec:
+  schedule: "0 * * * *"      # hourly on the hour
+  concurrencyPolicy: Forbid  # never overlap backup runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1h max; dump should complete in <5min
+      template:
+        metadata:
+          labels:
+            app: plane-backup
+        spec:
+          serviceAccountName: plane-backup-sa
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: false  # Alpine images; anyuid SCC bound above
+          imagePullSecrets:
+            - name: harbor-pull-secret
+          initContainers:
+            - name: pg-dump
+              image: harbor.208.haist.farm/sentinel/postgres@sha256:a513e5eb5d31612c5c29565e403ba72861b0da184a8676eb5f2bbc0caae3d8ff
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  DUMPFILE="/backup/plane-${TIMESTAMP}.dump"
+                  echo "[pg-dump] Starting pg_dump to ${DUMPFILE}"
+                  pg_dump \
+                    --host=plane-postgresql.plane.svc.cluster.local \
+                    --port=5432 \
+                    --username=plane \
+                    --dbname=plane \
+                    --format=custom \
+                    --file="${DUMPFILE}"
+                  echo "[pg-dump] Dump complete: $(du -sh ${DUMPFILE})"
+                  # Write filename to shared vol so upload container can find it
+                  echo "${DUMPFILE}" > /backup/latest.txt
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: plane-backup-config
+                      key: PGPASSWORD
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              volumeMounts:
+                - name: backup-vol
+                  mountPath: /backup
+          containers:
+            - name: upload
+              image: harbor.208.haist.farm/sentinel/mc@sha256:dce495b4f330bf87354c62743e06c3c7d68eedd23f8f94853a441931469cebdb
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  DUMPFILE=$(cat /backup/latest.txt)
+                  echo "[upload] Uploading ${DUMPFILE} to MinIO"
+                  mc alias set target "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+                  mc cp "${DUMPFILE}" "target/${MINIO_BUCKET}/$(basename ${DUMPFILE})"
+                  echo "[upload] Done: s3://${MINIO_BUCKET}/$(basename ${DUMPFILE})"
+                  # Verify upload succeeded
+                  mc ls "target/${MINIO_BUCKET}/$(basename ${DUMPFILE})"
+              envFrom:
+                - secretRef:
+                    name: plane-backup-config
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "256Mi"
+              volumeMounts:
+                - name: backup-vol
+                  mountPath: /backup
+          volumes:
+            - name: backup-vol
+              emptyDir:
+                sizeLimit: 20Gi  # OPS-1050: DB is 9.1GiB raw; historical dumps 4.3GiB (May-25), growing to ~5.1GiB.
+                               # 8Gi provides headroom until DB reaches ~14GiB at current compression ratio.
+                               # 20Gi (~4x current dump, 2.2x raw DB) provides long-term CP-9 reliability.

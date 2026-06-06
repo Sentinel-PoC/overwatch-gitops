@@ -1,0 +1,122 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: sentinel-ops
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cronjobs
+  namespace: sentinel-ops
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    # Vault API
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.206/32
+      ports:
+        - port: 8200
+          protocol: TCP
+    # Grafana via Traefik
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.168/32
+      ports:
+        - port: 443
+          protocol: TCP
+    # MinIO
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP
+    # MinIO replica
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.59/32
+      ports:
+        - port: 9000
+          protocol: TCP
+    # Forgejo API
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.70/32
+      ports:
+        - port: 80
+          protocol: TCP
+        - port: 443
+          protocol: TCP
+        - port: 3000
+          protocol: TCP
+    # Wazuh API
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.100/32
+      ports:
+        - port: 55000
+          protocol: TCP
+    # Kubernetes API (for ESO, SA token auth)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/24
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-etcd-backup-egress
+  namespace: sentinel-ops
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: etcd-backup
+  policyTypes:
+    - Egress
+  egress:
+    # OPS-242 (4th iteration — evidence from OVN audit log on 2026-05-01T18:18Z):
+    # OVN-K NP egress evaluates against POST-DNAT destination. For this etcd Service
+    # (port 2379 → targetPort 2379, no translation), drops show nw_dst=10.0.0.x:2379.
+    # Earlier rounds 2-3 misread "9980" as a port-translation; 9980 is actually a
+    # separate readyz-sidecar port. The actual etcd port is 2379 throughout.
+    # See sentinel-ops namespace annotation k8s.ovn.org/acl-logging for re-verification.
+    #
+    # OPS-292: Tightened from 10.0.0.0/24 (256 IPs) to 10.0.0.220/30 (4 IPs).
+    # Prod master IPs: 10.0.0.221 (master-0), 10.0.0.222 (master-1), 10.0.0.223 (master-2)
+    # per docs/architecture.md in sentinel-iac. 10.0.0.220/30 also covers 10.0.0.220
+    # (bootstrap node, powered off). No other hosts in this /30.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.220/30  # OKD master-node /30 (post-DNAT destination) — OPS-292
+      ports:
+        - port: 2379             # etcd Service port = targetPort (no translation)
+          protocol: TCP

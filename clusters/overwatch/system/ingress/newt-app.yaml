@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: newt-tunnel
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://forgejo.208.haist.farm/sentinel-admin/overwatch-gitops.git
+    targetRevision: main
+    path: clusters/overwatch/system/ingress/newt-resources
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pangolin-internal
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

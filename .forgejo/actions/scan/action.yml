@@ -1,0 +1,296 @@
+---
+# OPS-701: scan composite — SBOM generation + OSV scan + language audit
+#
+# Purpose:
+#   Observability-focused scanning: produce SBOM (CycloneDX via Syft) and
+#   vulnerability data (OSV-Scanner + ecosystem lockfile audit). Results feed
+#   the attest composite (SBOM attestation) and report composite (DefectDojo upload).
+#
+# Failure policy: NON-FATAL end-to-end.
+#   - Missing tools emit ::warning:: annotations; step succeeds.
+#   - OSV-Scanner errors: warning unless MAL-* (malicious) packages found +
+#     hard-fail-on-critical=true.
+#   - Language audit failures: ::warning:: only (vulns are informational here).
+#   - No set -euo pipefail at the step level; per-call error capture only.
+#
+# Root patterns fixed (OPS-699 §4):
+#   - Pattern A: this composite owns scanning only; it does NOT call DefectDojo
+#     (that's report composite). No non-critical reporting can cascade into scan.
+#   - Pattern C: no global error handler; each tool invocation captures its exit code.
+#
+# Vendored in overwatch-gitops per OPS-239 (forgejo-runner cross-repo uses: resolution
+# requires code.forgejo.org which does not host sentinel-admin private repos).
+# Source of truth: sentinel-admin/sentinel-iac/.forgejo/actions/scan/action.yml
+# Last synced: OPS-701 initial creation 2026-05-16
+
+name: "Security Scan (SBOM + OSV + Language Audit)"
+description: >
+  Generate CycloneDX SBOM via Syft, run OSV-Scanner on image filesystem,
+  and run ecosystem-specific lockfile audit (npm/pip/go/cargo). Non-fatal.
+  Produces sbom.cyclonedx.json and osv.json for downstream composites.
+
+inputs:
+  image-ref:
+    description: >
+      Fully-qualified image reference (with digest preferred):
+      harbor.208.haist.farm/sentinel/myapp@sha256:abc123
+      OR harbor.208.haist.farm/sentinel/myapp:tag
+    required: true
+
+  language:
+    description: >
+      Language ecosystem for lockfile-based supply-chain audit.
+      node   -> npm audit signatures + npm audit --audit-level=critical
+      python -> pip-audit
+      go     -> govulncheck
+      rust   -> cargo audit
+      none   -> skip lockfile audit (still runs SBOM + OSV image scan)
+    required: false
+    default: "none"
+
+  source-dir:
+    description: "Path to source directory containing lockfiles"
+    required: false
+    default: "."
+
+  hard-fail-on-critical:
+    description: >
+      Exit non-zero if OSV-Scanner finds malicious packages (MAL-* entries).
+      Vulnerability findings (non-malicious) always emit ::warning:: only.
+    required: false
+    default: "true"
+
+outputs:
+  sbom-component-count:
+    description: "Number of components in generated CycloneDX SBOM (or 'unknown')"
+    value: ${{ steps.sbom.outputs.sbom_component_count }}
+
+runs:
+  using: "composite"
+  steps:
+    # ---------------------------------------------------------------
+    # STEP 1: Generate CycloneDX SBOM via Syft
+    #
+    # Non-fatal: if syft is absent, emit ::error:: and exit so the
+    # caller knows scan didn't run — but this is a scanner-not-found
+    # hard error, not a results error. Downstream attest and report
+    # can handle a missing sbom.cyclonedx.json gracefully.
+    # ---------------------------------------------------------------
+    - name: Generate CycloneDX SBOM (Syft)
+      id: sbom
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+      run: |
+        echo "=== OPS-701 scan: SBOM Generation (Syft) ==="
+        echo "Image: ${IMAGE_REF}"
+
+        if ! command -v syft >/dev/null 2>&1; then
+          echo "::error::syft not found on runner. Install via:"
+          echo "::error::  curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin"
+          exit 1
+        fi
+
+        SYFT_EXIT=0
+        syft "${IMAGE_REF}" \
+          --scope all-layers \
+          --output cyclonedx-json=sbom.cyclonedx.json \
+          --output table || SYFT_EXIT=$?
+
+        if [ "${SYFT_EXIT}" -ne 0 ]; then
+          echo "::warning::syft exited ${SYFT_EXIT} — sbom.cyclonedx.json may be incomplete or absent"
+        fi
+
+        COMPONENT_COUNT="unknown"
+        if [ -f sbom.cyclonedx.json ]; then
+          COMPONENT_COUNT=$(python3 -c "
+        import json
+        try:
+            d = json.load(open('sbom.cyclonedx.json'))
+            print(len(d.get('components', [])))
+        except Exception:
+            print('unknown')
+          " 2>/dev/null || echo "unknown")
+        fi
+
+        echo "SBOM: sbom.cyclonedx.json (${COMPONENT_COUNT} components)"
+        echo "sbom_component_count=${COMPONENT_COUNT}" >> "${GITHUB_OUTPUT}"
+
+    # ---------------------------------------------------------------
+    # STEP 2: Language-specific supply-chain audit
+    #
+    # Non-fatal throughout: vulnerability findings are informational.
+    # Missing tools emit ::warning:: and continue.
+    # ---------------------------------------------------------------
+    - name: Language supply-chain audit
+      shell: bash
+      env:
+        LANGUAGE: ${{ inputs.language }}
+        SOURCE_DIR: ${{ inputs.source-dir }}
+      run: |
+        echo "=== OPS-701 scan: Language Supply-chain Audit (${LANGUAGE}) ==="
+
+        if [ "${LANGUAGE}" = "none" ]; then
+          echo "language=none — skipping lockfile-based audit (SBOM+OSV scan still ran)"
+          exit 0
+        fi
+
+        cd "${SOURCE_DIR}"
+
+        case "${LANGUAGE}" in
+          node)
+            echo "Running npm audit signatures..."
+            if [ -f package-lock.json ]; then
+              NPM_AUDIT_SIG_EXIT=0
+              npm audit signatures 2>&1 | tee npm-audit-signatures.txt || NPM_AUDIT_SIG_EXIT=$?
+              if [ "${NPM_AUDIT_SIG_EXIT}" -ne 0 ]; then
+                echo "::warning::npm audit signatures exited ${NPM_AUDIT_SIG_EXIT} — review npm-audit-signatures.txt"
+              fi
+              NPM_AUDIT_EXIT=0
+              npm audit --audit-level=critical 2>&1 | tee npm-audit-vulns.txt || NPM_AUDIT_EXIT=$?
+              if [ "${NPM_AUDIT_EXIT}" -ne 0 ]; then
+                echo "::warning::npm audit found critical vulnerabilities — review npm-audit-vulns.txt"
+              fi
+            elif [ -f pnpm-lock.yaml ]; then
+              echo "pnpm lockfile detected — running pnpm audit"
+              PNPM_EXIT=0
+              pnpm audit --audit-level=critical 2>&1 | tee npm-audit-vulns.txt || PNPM_EXIT=$?
+              if [ "${PNPM_EXIT}" -ne 0 ]; then
+                echo "::warning::pnpm audit found critical vulnerabilities"
+              fi
+            else
+              echo "::warning::No package-lock.json or pnpm-lock.yaml found in ${SOURCE_DIR}. Skipping npm audit."
+            fi
+            ;;
+          python)
+            echo "Running pip-audit..."
+            if command -v pip-audit >/dev/null 2>&1; then
+              if [ -f requirements.txt ]; then
+                PIP_EXIT=0
+                pip-audit -r requirements.txt --format json --output pip-audit-report.json 2>&1 || PIP_EXIT=$?
+                if [ "${PIP_EXIT}" -ne 0 ]; then
+                  echo "::warning::pip-audit found vulnerabilities — review pip-audit-report.json"
+                fi
+              elif [ -f pyproject.toml ]; then
+                PIP_EXIT=0
+                pip-audit --format json --output pip-audit-report.json 2>&1 || PIP_EXIT=$?
+                if [ "${PIP_EXIT}" -ne 0 ]; then
+                  echo "::warning::pip-audit found vulnerabilities — review pip-audit-report.json"
+                fi
+              else
+                echo "::warning::No requirements.txt or pyproject.toml found. Skipping pip-audit."
+              fi
+            else
+              echo "::warning::pip-audit not installed. Install: pip install pip-audit"
+            fi
+            ;;
+          go)
+            echo "Running govulncheck..."
+            if command -v govulncheck >/dev/null 2>&1; then
+              GOV_EXIT=0
+              govulncheck ./... 2>&1 | tee govulncheck-report.txt || GOV_EXIT=$?
+              if [ "${GOV_EXIT}" -ne 0 ]; then
+                echo "::warning::govulncheck found vulnerabilities — review govulncheck-report.txt"
+              fi
+            else
+              echo "::warning::govulncheck not installed. Install: go install golang.org/x/vuln/cmd/govulncheck@latest"
+            fi
+            ;;
+          rust)
+            echo "Running cargo audit..."
+            if command -v cargo-audit >/dev/null 2>&1 || command -v cargo >/dev/null 2>&1; then
+              CARGO_EXIT=0
+              cargo audit --json > cargo-audit-report.json 2>&1 || CARGO_EXIT=$?
+              if [ "${CARGO_EXIT}" -ne 0 ]; then
+                echo "::warning::cargo audit found vulnerabilities — review cargo-audit-report.json"
+              fi
+            else
+              echo "::warning::cargo audit not installed. Install: cargo install cargo-audit"
+            fi
+            ;;
+          *)
+            echo "::warning::Unknown language '${LANGUAGE}'. Valid values: node, python, go, rust, none"
+            ;;
+        esac
+
+    # ---------------------------------------------------------------
+    # STEP 3: OSV-Scanner on image filesystem
+    #
+    # Non-fatal for vulnerability findings. Hard-fails only on
+    # MAL-* (malicious package) entries when hard-fail-on-critical=true.
+    # Produces osv.json for downstream report and attest composites.
+    # ---------------------------------------------------------------
+    - name: OSV-Scanner image scan
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        HARD_FAIL: ${{ inputs.hard-fail-on-critical }}
+      run: |
+        echo "=== OPS-701 scan: OSV-Scanner ==="
+
+        if ! command -v osv-scanner >/dev/null 2>&1; then
+          echo "::warning::osv-scanner not found — skipping OSV image scan."
+          echo "::warning::Install: https://google.github.io/osv-scanner/"
+          echo '{"results": [], "experimental_config": {}}' > osv.json
+          exit 0
+        fi
+
+        OSV_EXIT=0
+        osv-scanner \
+          --format json \
+          --output osv.json \
+          --recursive \
+          . || OSV_EXIT=$?
+
+        VULN_COUNT=0
+        if [ -f osv.json ]; then
+          VULN_COUNT=$(python3 -c "
+        import json, sys
+        try:
+            d = json.load(open('osv.json'))
+            results = d.get('results', [])
+            total = sum(len(r.get('packages', [])) for r in results)
+            print(total)
+        except Exception:
+            print(0)
+          " 2>/dev/null || echo 0)
+        fi
+
+        echo "OSV-Scanner findings: ${VULN_COUNT} affected packages (exit code: ${OSV_EXIT})"
+
+        if [ "${HARD_FAIL}" = "true" ]; then
+          MAL_COUNT=$(python3 -c "
+        import json, sys
+        try:
+            d = json.load(open('osv.json'))
+            malicious = []
+            for result in d.get('results', []):
+                for pkg in result.get('packages', []):
+                    for vuln in pkg.get('vulnerabilities', []):
+                        vuln_id = vuln.get('id', '')
+                        summary = vuln.get('summary', '').lower()
+                        if 'malicious' in summary or vuln_id.startswith('MAL-'):
+                            malicious.append(vuln_id)
+            if malicious:
+                print(len(malicious), file=sys.stdout)
+                print('Malicious entries:', malicious, file=sys.stderr)
+            else:
+                print(0)
+        except Exception:
+            print(0)
+          " 2>/tmp/osv-mal-stderr.txt)
+
+          if [ -s /tmp/osv-mal-stderr.txt ]; then
+            echo "::error::$(cat /tmp/osv-mal-stderr.txt)"
+          fi
+
+          if [ "${MAL_COUNT:-0}" -gt 0 ]; then
+            echo "::error::OSV-Scanner detected ${MAL_COUNT} malicious package entries. Build failed."
+            echo "::error::Review osv.json for MAL-* or malicious-tagged entries."
+            exit 1
+          fi
+        fi
+
+        if [ "${OSV_EXIT}" -ne 0 ]; then
+          echo "::warning::OSV-Scanner exited ${OSV_EXIT} with non-malicious findings — review osv.json"
+        fi

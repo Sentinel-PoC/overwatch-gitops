@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falco
+data:
+  falco.yaml: |
+    rules_files:
+      - /etc/falco/falco_rules.yaml
+      - /etc/falco/falco_rules.local.yaml
+      - /etc/falco/rules.d
+
+    # OPS-138 (2026-04-26): Falco 0.43+ moved syscall-based container metadata
+    # enrichment from the core into a dedicated 'container' plugin. Both
+    # declaring it under `plugins:` AND listing it in `load_plugins:` is required
+    # — without either, Falco refuses to start ("Plugin requirement not
+    # satisfied, must load one of: container (>= 0.4.0)") and the DaemonSet
+    # CrashLoops. The pre-0.43 `container_engines:` top-level block is now
+    # passed via the plugin's init_config instead.
+    plugins:
+      - name: container
+        library_path: libcontainer.so
+        # OPS-138 follow-up: container plugin requires init_config as a JSON
+        # string, not YAML. Passing a YAML block scalar caused "init config is
+        # not a valid json" and immediate crash on startup despite the library
+        # loading successfully. Using a single-line JSON string here.
+        #
+        # OPS-138 follow-up 2: container@0.6.4 schema (plugin_config_schema.h,
+        # v0.6.4 tag) requires ALL 7 engine keys in the engines object:
+        # bpm, containerd, cri, docker, libvirt_lxc, lxc, podman. Omitting any
+        # one causes "Missing required property '<key>'" and immediate exit.
+        # SocketsContainer engines (cri, containerd, docker, podman) also require
+        # sockets[] when enabled=true (oneOf constraint). This cluster uses
+        # CRI-O only; all other engines disabled.
+        init_config: '{"engines":{"bpm":{"enabled":false},"containerd":{"enabled":false},"cri":{"enabled":true,"sockets":["/run/crio/crio.sock"]},"docker":{"enabled":false},"libvirt_lxc":{"enabled":false},"lxc":{"enabled":false},"podman":{"enabled":false}}}'
+      - name: k8saudit
+        library_path: libk8saudit.so
+        open_params: "http://:9765/k8s-audit"
+      - name: json
+        library_path: libjson.so
+
+    load_plugins:
+      - container
+
+    # OPS-1013 (2026-05-28): Falco ring-buffer overflow on master-2 CPUs 6+7.
+    # Root cause: with cpus_for_each_buffer: 2, CPUs 6 and 7 shared one 8MB
+    # buffer. Live metrics confirmed ALL 15,328 cumulative drops on cpu_6 (8089)
+    # and cpu_7 (7239) with zero drops on the remaining 10 CPUs. Peak event rate
+    # 61,547/s with 27,074 drops/s (2026-05-26T19:08Z) — 44% drop rate.
+    #
+    # Fix: set cpus_for_each_buffer: 1 so each CPU gets its own dedicated ring
+    # buffer (12 buffers instead of 6). buf_size_preset: 4 is the default (8MB)
+    # made explicit. Memory: 12 × 8MB = 96MB total (was 6 × 8MB = 48MB, +48MB).
+    # No syscall coverage reduction — buffer topology only.
+    engine:
+      kind: modern_ebpf
+      modern_ebpf:
+        cpus_for_each_buffer: 1  # OPS-1013: was 2; each CPU gets its own buffer
+        buf_size_preset: 4       # OPS-1013: explicit (default 4 = 8MB/buffer)
+
+    time_format_iso_8601: true
+    json_output: true
+    json_include_output_property: true
+    json_include_tags_property: true
+
+    log_stderr: true
+    log_syslog: false
+    log_level: info
+
+    priority: notice
+
+    # OPS-206 (2026-04-30): buffered_outputs=true + finite queue so a transient
+    # falcosidekick outage degrades to dropped events, not Falco syscall stalls.
+    buffered_outputs: true
+    outputs_queue:
+      capacity: 10000
+
+    stdout_output:
+      enabled: true
+
+    # OPS-206 (2026-04-30): Enable HTTP output → falcosidekick (deployed by OPS-205).
+    # MERGE ORDER: this MR must be merged AFTER OPS-205 PR #104 merges and
+    # falcosidekick Deployment shows READY 1/1 in falco-system namespace.
+    http_output:
+      enabled: true
+      url: "http://falcosidekick.falco-system.svc.cluster.local:2801/"
+
+    metrics:
+      enabled: true
+      interval: 15m
+      output_rule: true
+      resource_utilization_enabled: true
+      kernel_event_counters_enabled: true
+      libbpf_stats_enabled: true
+      convert_memory_to_mb: true
+
+    webserver:
+      enabled: true
+      listen_port: 8765
+      k8s_healthz_endpoint: /healthz
+      # OPS-524: enable Prometheus /metrics endpoint so ServiceMonitor scrape
+      # returns falcosecurity_scap_n_evts_total / falcosecurity_falco_rules_matches_total
+      # instead of empty. Metric names use falcosecurity_ prefix (Falco 0.43+).
+      # Without this flag the webserver only serves /healthz (confirmed 2026-05-27).
+      prometheus_metrics_enabled: true
+
+    syscall_event_drops:
+      threshold: 0.1
+      actions:
+        - log
+        - alert
+      rate: 0.03333
+      max_burst: 1
+
+    grpc:
+      enabled: false
+
+    grpc_output:
+      enabled: false
+
+  falco_rules.local.yaml: |
+    # OKD-tuned custom rules — suppress noise from platform components
+
+    # Suppress noisy default rules for OKD platform operations
+    - rule: Contact K8S API Server From Container
+      enabled: false
+      override:
+        enabled: replace
+
+    - rule: Read sensitive file untrusted
+      enabled: false
+      override:
+        enabled: replace
+
+    # Alert on all shell spawns in containers (tune exclusions later)
+    - rule: Shell Spawned in Application Container
+      desc: Detect shell spawns in containers
+      condition: >
+        spawned_process and container and
+        proc.name in (bash, sh, dash, ash, zsh, csh, ksh) and
+        proc.tty != 0
+      output: >
+        Shell spawned in container
+        (user=%user.name shell=%proc.name parent=%proc.pname
+         cmdline=%proc.cmdline container_id=%container.id)
+      priority: WARNING
+      tags: [container, shell, mitre_execution]
+
+    # Detect sensitive file access
+    - rule: Read Sensitive File in Container
+      desc: Detect reads of sensitive files like /etc/shadow inside containers
+      condition: >
+        open_read and container and
+        fd.name in (/etc/shadow, /etc/gshadow, /etc/sudoers) and
+        not proc.name in (groupadd, useradd, adduser, pg_isready)
+      output: >
+        Sensitive file read in container
+        (user=%user.name file=%fd.name proc=%proc.name
+         cmdline=%proc.cmdline container_id=%container.id)
+      priority: WARNING
+      tags: [container, filesystem, mitre_credential_access]

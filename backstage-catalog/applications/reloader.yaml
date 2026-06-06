@@ -1,0 +1,20 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: reloader
+  description: Stakater Reloader — watches ConfigMaps and Secrets for changes and triggers rolling restarts of dependent Deployments
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=reloader
+    backstage.io/kubernetes-namespace: reloader
+    argocd/app-name: reloader
+  tags:
+    - platform
+    - gitops
+    - automation
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform

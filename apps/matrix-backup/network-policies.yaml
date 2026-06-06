@@ -1,0 +1,63 @@
+# OPS-481 Phase 3: NetworkPolicies for matrix-backup namespace.
+# Two egress targets: matrix-postgresql Service (TCP 5432) + MinIO .58 (TCP 9000).
+# kubectl exec NOT used — pg_dump connects directly via TCP.
+# matrix namespace has no default-deny today; if one is added later, an ingress
+# allow on matrix-postgresql from matrix-backup namespace will be needed.
+---
+# Default deny all — defense in depth for the backup namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: matrix-backup
+  labels:
+    security.sentinel/layer: network-policy
+    security.sentinel/type: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow egress: PostgreSQL (matrix ns), MinIO (.58), DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-matrix-backup-egress
+  namespace: matrix-backup
+  labels:
+    security.sentinel/layer: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: matrix-backup
+  policyTypes:
+    - Egress
+  egress:
+    # PostgreSQL in matrix namespace (direct TCP — no kubectl exec)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: matrix
+      ports:
+        - port: 5432
+          protocol: TCP
+    # MinIO S3 backup destination (.58)
+    - to:
+        - ipBlock:
+            cidr: 192.168.12.58/32
+      ports:
+        - port: 9000
+          protocol: TCP
+    # DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP

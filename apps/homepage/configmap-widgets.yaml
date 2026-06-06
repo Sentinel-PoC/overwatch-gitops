@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-widgets
+  namespace: homepage
+data:
+  widgets.yaml: |
+    - greeting:
+        text_size: xl
+        text: Sentinel Platform
+    - datetime:
+        text_size: lg
+        format:
+          dateStyle: long
+          timeStyle: short

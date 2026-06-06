@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: falcosidekick
+  description: Falcosidekick event forwarder — routes Falco alerts to Slack, ntfy, and other sinks
+  annotations:
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=falcosidekick
+    backstage.io/kubernetes-namespace: falco-system
+    argocd/app-name: falcosidekick
+  tags:
+    - security
+    - alerting
+    - falco
+    - overwatch
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - component:falco
+    - component:ntfy

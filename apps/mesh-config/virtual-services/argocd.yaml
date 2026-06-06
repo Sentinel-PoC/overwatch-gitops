@@ -1,0 +1,24 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: argocd
+  namespace: openshift-gitops
+spec:
+  hosts:
+    - argocd.208.haist.farm
+  gateways:
+    - istio-ingress/sentinel-gateway
+  http:
+    # OPS-646: explicit catch-all match so Istio routes /login, /applications,
+    # and all other SPA deep-links to argocd-server instead of returning 404.
+    # Without an explicit match, some Istio routing evaluations may drop
+    # sub-path requests before reaching the app-level SPA fallback handler.
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: openshift-gitops-server.openshift-gitops.svc.cluster.local
+            port:
+              number: 80

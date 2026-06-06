@@ -1,0 +1,26 @@
+---
+# Default deny — Istio rejects any request that isn't matched by an explicit
+# ALLOW rule below.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: cfwc-website
+spec: {}
+---
+# Ingress: only the istio ingress gateway service account may reach the pod.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: cfwc-website
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cfwc-website
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/istio-ingress/sa/istio-ingressgateway

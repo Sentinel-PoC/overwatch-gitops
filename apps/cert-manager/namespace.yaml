@@ -1,0 +1,11 @@
+---
+# OPS-518 — cert-manager namespace
+# cert-manager OLM install goes into cert-manager namespace per Community Operator convention.
+# Note: cert-manager Community Operator manages its own namespace after CSV install;
+# this pre-creates the namespace so ArgoCD can apply OperatorGroup before subscription.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    app.kubernetes.io/managed-by: argocd

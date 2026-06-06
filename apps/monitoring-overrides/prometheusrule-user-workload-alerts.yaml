@@ -1,0 +1,273 @@
+---
+# OPS-953 — User-workload pod availability PrometheusRules
+#
+# Context: OPS-949 incident (2026-05-25). defectdojo-postgresql and
+# langfuse-clickhouse were in CreateContainerError for 81+ minutes with
+# ZERO Telegram alerts. Root cause: standard kube-prometheus-stack rules
+# (KubePodNotReady, KubePodCrashLooping, etc.) hard-code
+# namespace=~"(openshift-.*|kube-.*|default)", excluding ALL user
+# workload namespaces. kube-state-metrics DOES expose metrics for user
+# namespaces (confirmed: 25 metrics for defectdojo, 45 for langfuse) —
+# the gap is purely in PrometheusRule namespace selectors.
+#
+# Additional gap covered here: KubePodNotReady fires on phase=Pending|
+# Unknown. CreateContainerError pods show phase=Running (containers not
+# ready) — so even fixing the namespace selector on KubePodNotReady
+# would miss this failure mode. UserWorkloadContainerWaiting catches it.
+#
+# Namespace coverage:
+#   Essential operator workloads: defectdojo, langfuse, plane, harbor,
+#     keycloak, matrix, backstage, netbox
+#   Additional user-facing: openshift-gitops, sentinel-ops, overwatch-
+#     console, cfwc-website, haists-website, haists-website-dev,
+#     homepage, demo
+#
+# Alertmanager routing verified:
+#   - severity=critical → Critical receiver → Telegram
+#   - severity=warning → Default receiver → Telegram
+#   - Watchdog heartbeat (OPS-897 Phase B) firing every 6h proves route.
+#
+# Metric label structure verified live (2026-05-25):
+#   kube_pod_status_phase: namespace, pod, phase, job=kube-state-metrics
+#   kube_pod_owner: namespace, pod, owner_kind, owner_name
+#   kube_pod_container_status_waiting_reason: namespace, pod, container, reason
+#   kube_deployment_spec_replicas: namespace, deployment, job=kube-state-metrics
+#   kube_deployment_status_replicas_available: namespace, deployment
+#   kube_statefulset_replicas: namespace, statefulset, job=kube-state-metrics
+#   kube_statefulset_status_replicas_ready: namespace, statefulset
+#   Note: no `cluster` label on this single-cluster instance.
+#
+# Pre-deployment PromQL baseline (2026-05-25 ~21:xx UTC):
+#   UserWorkloadPodNotReady: 0 series (cluster healthy)
+#   UserWorkloadContainerWaiting: 0 series (cluster healthy)
+#   UserWorkloadCrashLooping: 0 series (cluster healthy)
+#   UserWorkloadDeploymentUnavailable: 2 series (netbox/netbox,
+#     netbox/netbox-worker — EXISTING issue; rule will surface via
+#     Telegram after for:10m. See OPS-953 PLAN comment.)
+#   UserWorkloadStatefulSetReplicasMismatch: 0 series (cluster healthy)
+#
+# Relation to existing rules:
+#   KubePodNotReady (kubernetes-monitoring-rules) — covers openshift-.*|
+#     kube-.*|default only. UserWorkloadPodNotReady covers user namespaces.
+#   KubePodCrashLooping (kubernetes-monitoring-rules) — same exclusion.
+#     UserWorkloadCrashLooping covers user namespaces.
+#   KubeContainerWaiting (kubernetes-monitoring-rules) — same exclusion,
+#     plus 1h hold (too slow). UserWorkloadContainerWaiting: 5m hold.
+#   KubeOperatorHighRestartCount (OPS-897) — openshift-.* restart rate.
+#     Complementary; no overlap on user namespaces.
+#
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: overwatch-user-workload-alerts
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/name: overwatch-user-workload-alerts
+    app.kubernetes.io/part-of: monitoring-overrides
+    ops.overwatch/issue: OPS-953
+spec:
+  groups:
+    - name: overwatch.user-workload
+      interval: 1m
+      rules:
+
+        # UserWorkloadPodNotReady — mirrors KubePodNotReady for user namespaces.
+        # Fires when a non-Job pod stays in Pending|Unknown phase for 15 minutes.
+        # Excludes unschedulable pods (separate scheduling alert) and Job-owned
+        # pods (short-lived by design).
+        - alert: UserWorkloadPodNotReady
+          expr: |
+            sum by (namespace, pod) (
+              max by (namespace, pod) (
+                kube_pod_status_phase{
+                  namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                  job="kube-state-metrics",
+                  phase=~"Pending|Unknown"
+                }
+                unless ignoring(phase) (
+                  kube_pod_status_unschedulable{job="kube-state-metrics"} == 1
+                )
+              ) * on (namespace, pod) group_left(owner_kind) topk by (namespace, pod) (
+                1, max by (namespace, pod, owner_kind) (
+                  kube_pod_owner{owner_kind!="Job"}
+                )
+              )
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+            team: ops
+            service: user-workloads
+          annotations:
+            summary: >-
+              User workload pod {{ $labels.namespace }}/{{ $labels.pod }} not ready
+            description: >-
+              Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has been in
+              a non-ready state (phase Pending or Unknown) for more than 15 minutes.
+              Immediate actions: (1) oc get pod -n {{ $labels.namespace }} {{ $labels.pod }};
+              (2) oc describe pod -n {{ $labels.namespace }} {{ $labels.pod }};
+              (3) oc logs -n {{ $labels.namespace }} {{ $labels.pod }}.
+              Discovery: OPS-949 (CreateContainerError 81 min, no alert).
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/faf64437-a01b-4958-843f-005b6d438530
+
+        # UserWorkloadContainerWaiting — catches containers stuck in non-transient
+        # waiting states: CreateContainerError, ImagePullBackOff, ErrImagePull,
+        # InvalidImageName, etc. Excludes PodInitializing and ContainerCreating
+        # (normal startup transients) and CrashLoopBackOff (separate alert below).
+        # 5-minute hold: fast enough to catch the OPS-949 pattern (81 min undetected)
+        # while filtering one-off scheduling blips.
+        - alert: UserWorkloadContainerWaiting
+          expr: |
+            kube_pod_container_status_waiting_reason{
+              namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+              job="kube-state-metrics",
+              reason!~"PodInitializing|ContainerCreating|CrashLoopBackOff"
+            } > 0
+          for: 5m
+          labels:
+            severity: warning
+            team: ops
+            service: user-workloads
+          annotations:
+            summary: >-
+              User workload container {{ $labels.namespace }}/{{ $labels.pod }} waiting: {{ $labels.reason }}
+            description: >-
+              Container {{ $labels.container }} in pod {{ $labels.pod }} (namespace
+              {{ $labels.namespace }}) has been in waiting state with reason
+              "{{ $labels.reason }}" for more than 5 minutes. Common causes:
+              CreateContainerError (volume mount / secret missing),
+              ImagePullBackOff (registry unreachable or image not found),
+              ErrImagePull (one-time pull failure). Immediate actions:
+              (1) oc get pod -n {{ $labels.namespace }} {{ $labels.pod }} -o yaml;
+              (2) oc describe pod -n {{ $labels.namespace }} {{ $labels.pod }};
+              (3) Check Events section for root cause.
+              Discovery: OPS-949 (CreateContainerError caught this pattern).
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/faf64437-a01b-4958-843f-005b6d438530
+
+        # UserWorkloadCrashLooping — mirrors KubePodCrashLooping for user namespaces.
+        # Fires when a container has been in CrashLoopBackOff waiting state for 5
+        # minutes (standard rule uses for:15m; reduced here for faster user-workload
+        # paging). Uses max_over_time over a 5m window to catch pods that briefly
+        # recover and restart before the for: window completes.
+        # severity=critical so it routes to the Critical Telegram receiver.
+        - alert: UserWorkloadCrashLooping
+          expr: |
+            max_over_time(
+              kube_pod_container_status_waiting_reason{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics",
+                reason="CrashLoopBackOff"
+              }[5m]
+            ) >= 1
+          for: 5m
+          labels:
+            severity: critical
+            team: ops
+            service: user-workloads
+          annotations:
+            summary: >-
+              User workload pod {{ $labels.namespace }}/{{ $labels.pod }} crash looping
+            description: >-
+              Container {{ $labels.container }} in pod {{ $labels.pod }} (namespace
+              {{ $labels.namespace }}) is in CrashLoopBackOff. The pod has been
+              crash looping for at least 5 minutes. Immediate actions:
+              (1) oc logs -n {{ $labels.namespace }} {{ $labels.pod }} --previous;
+              (2) oc describe pod -n {{ $labels.namespace }} {{ $labels.pod }};
+              (3) oc get events -n {{ $labels.namespace }} --sort-by=.lastTimestamp.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/faf64437-a01b-4958-843f-005b6d438530
+
+        # UserWorkloadDeploymentUnavailable — fires when a Deployment has fewer
+        # available replicas than desired, and desired > 0 (ignores intentionally
+        # scaled-to-zero deployments). 10-minute hold filters transient rollouts.
+        # NOTE: netbox/netbox and netbox/netbox-worker currently match this
+        # expression (available=0, desired=1). Rule will fire after for:10m once
+        # applied. This surfaces an existing gap — see OPS-953 PLAN comment.
+        # Label matching note: kube_deployment_spec_replicas and
+        # kube_deployment_status_replicas_available share the same label set
+        # (namespace, deployment, container, endpoint, job, service) on this
+        # cluster. No `on` clause needed — natural label matching is correct.
+        - alert: UserWorkloadDeploymentUnavailable
+          expr: |
+            (
+              kube_deployment_spec_replicas{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics"
+              } > 0
+            )
+            and (
+              kube_deployment_status_replicas_available{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics"
+              }
+              <
+              kube_deployment_spec_replicas{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics"
+              }
+            )
+          for: 10m
+          labels:
+            severity: warning
+            team: ops
+            service: user-workloads
+          annotations:
+            summary: >-
+              User workload deployment {{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas
+            description: >-
+              Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }}
+              has fewer available replicas than desired for more than 10 minutes.
+              Immediate actions: (1) oc get deployment -n {{ $labels.namespace }} {{ $labels.deployment }};
+              (2) oc get pods -n {{ $labels.namespace }} -l app={{ $labels.deployment }};
+              (3) oc describe deployment -n {{ $labels.namespace }} {{ $labels.deployment }}.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/faf64437-a01b-4958-843f-005b6d438530
+
+        # UserWorkloadStatefulSetReplicasMismatch — mirrors
+        # KubeStatefulSetReplicasMismatch for user namespaces. Fires when a
+        # StatefulSet has fewer ready replicas than desired for 10 minutes, and
+        # the replica count has not been changing (filters active rollouts).
+        # desired > 0 filter excludes intentionally scaled-to-zero StatefulSets.
+        # Label matching note: metrics share the same label set on this cluster;
+        # no `on` clause needed — natural label matching is correct.
+        - alert: UserWorkloadStatefulSetReplicasMismatch
+          expr: |
+            (
+              kube_statefulset_status_replicas_ready{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics"
+              }
+              !=
+              kube_statefulset_replicas{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics"
+              }
+            )
+            and (
+              kube_statefulset_replicas{
+                namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                job="kube-state-metrics"
+              } > 0
+            )
+            and (
+              changes(
+                kube_statefulset_status_replicas_updated{
+                  namespace=~"(backstage|cfwc-website|defectdojo|demo|haists-website|haists-website-dev|harbor|homepage|keycloak|langfuse|matrix|netbox|openshift-gitops|overwatch-console|plane|sentinel-ops)",
+                  job="kube-state-metrics"
+                }[10m]
+              ) == 0
+            )
+          for: 10m
+          labels:
+            severity: warning
+            team: ops
+            service: user-workloads
+          annotations:
+            summary: >-
+              User workload StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} replicas mismatch
+            description: >-
+              StatefulSet {{ $labels.statefulset }} in namespace {{ $labels.namespace }}
+              has not matched the expected number of replicas for more than 10 minutes.
+              The replica count has not been changing (not a rollout). Immediate actions:
+              (1) oc get statefulset -n {{ $labels.namespace }} {{ $labels.statefulset }};
+              (2) oc get pods -n {{ $labels.namespace }} -l app={{ $labels.statefulset }};
+              (3) oc describe statefulset -n {{ $labels.namespace }} {{ $labels.statefulset }}.
+              Runbook: https://plane.208.haist.farm/haists-it-consulting/projects/223c0b66-4255-406e-932f-3b50c0e93543/issues/faf64437-a01b-4958-843f-005b6d438530

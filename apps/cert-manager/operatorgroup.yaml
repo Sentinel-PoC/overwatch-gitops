@@ -1,0 +1,11 @@
+---
+# OPS-518 — cert-manager OperatorGroup
+# OPS-1118 — fixed: removed targetNamespaces (OwnNamespace) because cert-manager v1.16.5 only
+# supports AllNamespaces install mode. An OperatorGroup with an empty spec (no targetNamespaces)
+# selects all namespaces, satisfying the AllNamespaces installMode requirement.
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: cert-manager-og
+  namespace: cert-manager
+spec: {}

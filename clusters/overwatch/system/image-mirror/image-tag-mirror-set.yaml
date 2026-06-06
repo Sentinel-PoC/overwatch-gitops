@@ -1,0 +1,32 @@
+# OPS-1076: ImageTagMirrorSet — sentinel harbor → off-cluster mirror failover (tag pulls).
+#
+# Companion to image-digest-mirror-set.yaml; covers pods that pull harbor.208.haist.farm/sentinel
+# images by TAG rather than digest.
+#
+# ITMS is REQUIRED: live cluster inspection (2026-06-04) confirmed 9 workloads use tag refs:
+#   defectdojo-django:2.55.4, defectdojo-nginx:2.55.4, grafana:12.4.3-security-02,
+#   k8s-sidecar:2.7.3, kiali:v2.26.1, langfuse-worker:3.169.0, langfuse:3.169.0,
+#   minio:latest, netbox-with-acls:v4.6.1-acls2.0.1
+# IDMS alone (digest-only) would not cover these workloads.
+#
+# mirrorSourcePolicy: AllowContactingSource — if the mirror is unreachable, fall back
+# to Harbor (source). Use NeverContactSource only after the fail-closed flip (SEC-104).
+#
+# NOT ArgoCD-managed: config.openshift.io/ImageTagMirrorSet is absent from the
+# AppProject default clusterResourceWhitelist. Pattern follows
+# clusters/overwatch/machineconfigs/master-kubelet-autosize-reserved.yaml.
+# MCO picks up ITMS changes and triggers a rolling node reboot (maxUnavailable=1 per pool).
+#
+# Apply:    oc apply -f clusters/overwatch/system/image-mirror/image-tag-mirror-set.yaml
+# Rollback: oc delete imagetagmirrorset sentinel-harbor-mirror
+---
+apiVersion: config.openshift.io/v1
+kind: ImageTagMirrorSet
+metadata:
+  name: sentinel-harbor-mirror
+spec:
+  imageTagMirrors:
+    - source: harbor.208.haist.farm/sentinel
+      mirrors:
+        - mirror.208.haist.farm:8443/sentinel
+      mirrorSourcePolicy: AllowContactingSource

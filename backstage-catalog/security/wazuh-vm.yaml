@@ -1,0 +1,27 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: wazuh-server
+  description: Wazuh SIEM with 9 agents, 77+ custom rules, FIM, and drift detection
+  annotations:
+    backstage.io/techdocs-ref: "url:https://forgejo.208.haist.farm/sentinel-admin/sentinel-iac/raw/branch/main/techdocs/wazuh"
+  links:
+    - url: https://wazuh.208.haist.farm
+      title: Wazuh Dashboard
+      icon: dashboard
+  tags:
+    - siem
+    - security
+    - monitoring
+    - vm-service
+    - overwatch
+spec:
+  type: vm
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-208-pve2
+  providesApis:
+    - wazuh-api

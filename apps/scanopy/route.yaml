@@ -1,0 +1,21 @@
+---
+# OPS-398: OKD Route for Scanopy UI at scanopy.208.haist.farm.
+# TLS edge termination, Redirect insecure. Pattern mirrors apps/ntfy/route.yaml.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: scanopy
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+spec:
+  host: scanopy.208.haist.farm
+  to:
+    kind: Service
+    name: scanopy-server
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

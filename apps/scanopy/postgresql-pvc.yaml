@@ -1,0 +1,18 @@
+---
+# OPS-398: Dynamic PVC for Scanopy PostgreSQL data.
+# Uses default StorageClass for initial deploy. Can be migrated to iSCSI
+# (pattern: apps/netbox/postgresql-pv.yaml) after initial validation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scanopy-postgresql-data
+  namespace: scanopy
+  labels:
+    app.kubernetes.io/name: scanopy
+    app.kubernetes.io/component: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,106 @@
+# OPS-650: ArgoCD dex OIDC — configure via spec.sso.dex in the ArgoCD CR, not argocd-cm patch.
+#
+# BACKGROUND
+# ──────────
+# PR #174 (e71c97e, OPS-605 Phase 3) added argocd-cm-dex-patch.yaml which patched the
+# argocd-cm ConfigMap directly to add a dex.config key. This approach does NOT work:
+#   - The OpenShift GitOps Operator owns the argocd-cm ConfigMap and reconciles it from
+#     the ArgoCD CR every ~30s. Any direct ConfigMap write is overwritten on the next
+#     reconcile cycle.
+#   - After manual apply, oc get configmap argocd-cm -o jsonpath='{.data.dex\.config}'
+#     returned EMPTY within seconds — confirmed 2026-05-15T13:12Z.
+#
+# The correct path is spec.sso.dex in the ArgoCD CR (kind: ArgoCD), which the Operator
+# itself writes into argocd-cm during reconcile. This is the authoritative OIDC config.
+#
+# CURRENT LIVE STATE (verified 2026-05-27)
+# -----------------------------------------
+# The ArgoCD CR already has the correct spec.sso block (manually applied prior session).
+# Dex pod (openshift-gitops-dex-server) is 1/1 Running, age 12d.
+# ArgoCD settings API: dexConfig shows 1 connector (Authentik, type oidc) -- working.
+# OPS-629 blocker (Authentik OIDC discovery 404): RESOLVED.
+# spec.oidcConfig: NOT SET -- Keycloak native OIDC removed (OPS-605 retirement).
+#
+# This file documents the correct CR state and provides re-apply instructions if the
+# cluster is rebuilt or the CR is reset.
+#
+# HOW TO APPLY
+# -------------
+# The ArgoCD CR is NOT managed by an ArgoCD Application (bootstrapping problem:
+# ArgoCD cannot manage its own namespace resources without a reconciliation loop).
+# Apply manually using a JSON patch (avoids YAML-in-YAML shell quoting issues):
+#
+#   oc patch argocd openshift-gitops -n openshift-gitops --type=merge -p "$(python3 -c "
+#   import json
+#   dex_config = '''connectors:
+#   - type: oidc
+#     id: authentik
+#     name: Authentik
+#     config:
+#       issuer: https://auth-next.208.haist.farm/application/o/argocd/
+#       clientID: HFFjxXWDagCiiEapBfJLgDGEVB7mfoiKOELtBKu1
+#       clientSecret: \$argocd-authentik-oidc:clientSecret
+#       redirectURI: https://argocd.208.haist.farm/api/dex/callback
+#       insecureEnableGroups: true
+#       scopes:
+#         - openid
+#         - profile
+#         - email
+#         - groups
+# '''
+#   patch = {'spec': {'sso': {'provider': 'dex', 'dex': {'openShiftOAuth': False, 'config': dex_config}}}}
+#   print(json.dumps(patch))
+#   ")"
+#
+# After patching, verify:
+#   oc get argocd openshift-gitops -n openshift-gitops \
+#     -o jsonpath='{.spec.sso.dex.config}'
+#   # Expected: YAML block with: connectors: - type: oidc / id: authentik
+#
+#   oc get pods -n openshift-gitops | grep dex
+#   # Expected: openshift-gitops-dex-server-* 1/1 Running
+#
+#   curl -sk https://argocd.208.haist.farm/api/dex/.well-known/openid-configuration
+#   # Expected: JSON with issuer = https://argocd.208.haist.farm/api/dex
+#
+#   curl -sk https://argocd.208.haist.farm/api/v1/settings | python3 -c \
+#     "import json,sys; d=json.load(sys.stdin); print(d.get('dexConfig',{}).get('connectors',[]))"
+#   # Expected: [{'name': 'Authentik', 'type': 'oidc'}]
+#
+# PREREQUISITE SECRETS
+# ---------------------
+# The dex config references $argocd-authentik-oidc:clientSecret -- this Secret is
+# materialized by external-secret.yaml (argocd-authentik-oidc ExternalSecret).
+# If the secret is missing, apply it first:
+#   oc apply -f apps/argocd/external-secret.yaml
+#
+# Vault path: secret/authentik/clients/argocd (field: client_secret)
+# Authentik app (slug: argocd) redirect URIs must include:
+#   https://argocd.208.haist.farm/api/dex/callback  (dex -- used by this config)
+#
+# GROUPS CLAIM
+# -------------
+# insecureEnableGroups: true -- allows the groups claim to be forwarded through dex.
+# ArgoCD RBAC policy (in argocd-cm rbac.policy.csv) maps Authentik groups to ArgoCD roles.
+# Without groups claim, Authentik logins succeed but users have no ArgoCD roles (read-only).
+#
+# WHAT NOT TO DO
+# ---------------
+# Do NOT patch argocd-cm directly with dex.config. The argocd-cm-dex-patch.yaml (ConfigMap)
+# approach was removed in OPS-650. The OpenShift GitOps Operator reconciles argocd-cm every
+# ~30s from the ArgoCD CR -- any direct ConfigMap write is silently overwritten.
+# The spec.sso CR path is the only durable method.
+#
+# Tracking: OPS-650
+# Related: OPS-605 (Phase 3 Keycloak->Authentik migration), OPS-629 (Pangolin OIDC fix)
+
+# Documentation-style stub -- documents the target CR state and manual apply instructions.
+# Not applied directly by kubectl as a standalone resource.
+# Preserved in gitops repo for audit trail and cluster rebuild reference.
+metadata:
+  name: argocd-cr-sso-patch
+  annotations:
+    ops.overwatch/issue: OPS-650
+    ops.overwatch/apply-manually: "true"
+    ops.overwatch/reason: "bootstrapping -- ArgoCD cannot manage its own CR"
+    ops.overwatch/live-state: "applied -- dex pod 1/1 Running, verified 2026-05-27"

@@ -1,0 +1,23 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: unifi-controller
+  description: UniFi Network Application on UCG-Fiber gateway managing 4 network devices
+  annotations:
+  links:
+    - url: https://192.168.12.1
+      title: UniFi Console
+      icon: dashboard
+  tags:
+    - networking
+    - unifi
+    - infrastructure
+    - overwatch
+spec:
+  type: network-controller
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  providesApis:
+    - unifi-network-api

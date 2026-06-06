@@ -1,0 +1,20 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: config-server
+  description: HA failover node (LXC 300) - keepalived BACKUP, DNS-only, no DHCP
+  annotations:
+  tags:
+    - ha
+    - failover
+    - dns
+    - infrastructure
+    - overwatch
+spec:
+  type: lxc-container
+  lifecycle: production
+  owner: platform-team
+  system: sentinel-platform
+  dependsOn:
+    - resource:proxmox-pve
